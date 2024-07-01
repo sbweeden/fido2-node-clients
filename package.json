@@ -1,0 +1,26 @@
+{
+  "name": "fido2-node-clients",
+  "version": "1.0.0",
+  "description": "Command line app for acting as a FIDO client",
+  "main": "fido2client.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sbweeden/fido2-node-clients.git"
+  },
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/sbweeden/fido2-node-clients/issues"
+  },
+  "homepage": "https://github.com/sbweeden/fido2-node-clients#readme",
+  "dependencies": {
+    "base64url": "^3.0.1",
+    "cbor": "^9.0.2",
+    "crypto-js": "^4.2.0",
+    "dotenv": "^16.4.5",
+    "jsrsasign": "^11.1.0"
+  }
+}
