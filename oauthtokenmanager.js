@@ -42,7 +42,7 @@ async function getAccessToken() {
 			let myBody = new URLSearchParams(formData);
 
 			fetch(
-				process.env.CI_TENANT_ENDPOINT + "/v1.0/endpoint/default/token",
+				process.env.ISV_TENANT_ENDPOINT + "/v1.0/endpoint/default/token",
 				{
 					method: "POST",
 					headers: {

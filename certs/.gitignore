@@ -1,0 +1,10 @@
+*.key
+*.pem
+*.csr
+*.srl
+encpass.txt
+fidotest-*.json
+rootCA.*
+packed.*
+u2f.*
+self.*

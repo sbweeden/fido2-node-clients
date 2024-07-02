@@ -231,7 +231,6 @@ function processCredentialCreationOptions(cco, attestationFormat = 'none', up = 
 	let result = {
 		authenticatorRecord: {
 			rpId: cco.publicKey.rp.id,
-			publicKeyHex: null,
 			privateKeyHex: null,
 			credentialID: null,
 			userHandle: null	
@@ -304,7 +303,6 @@ function processCredentialCreationOptions(cco, attestationFormat = 'none', up = 
 
 	// store the private/public  key, credentialID and userHandle
 	result.authenticatorRecord.privateKeyHex = keypair.prvKeyObj.prvKeyHex;
-	result.authenticatorRecord.publicKeyHex = keypair.pubKeyObj.pubKeyHex;
 	result.authenticatorRecord.credentialID = jsrsasign.hextob64u(jsrsasign.BAtohex(credIdBytes));
 	result.authenticatorRecord.userHandle = jsrsasign.hextob64u(jsrsasign.BAtohex(bytesFromArray(cco.publicKey.user.id,0,-1)));
 	
@@ -547,7 +545,6 @@ function processCredentialRequestOptions(cro, authenticatorRecords, up = true, u
 		// credential information
 		let ecdsa = new jsrsasign.KJUR.crypto.ECDSA({'curve': 'prime256v1'});
 		ecdsa.setPrivateKeyHex(privKeyHex);
-		//ecdsa.setPublicKeyHex(EC_PUBLIC_KEY_HEX);
 		
 		// compute the signature
 		let cHash = sha256(jsrsasign.b64toBA(jsrsasign.b64utob64(saar.clientDataJSON)));
