@@ -31,7 +31,6 @@ function timedFetch(url, fetchOptions) {
 		} else {
 			statsMap[bucket] = [ now-start ];
 		}
-
 		if (returnAsJSON) {
 			if (!result.ok) {
 				logger.logWithTS("timedFetch unexpected result. status: " + result.status);
@@ -106,7 +105,8 @@ function normaliseError(methodName, e, genericError) {
 	} else if (e != null && e.error != null && e.error.messageId != null && e.error.messageDescription != null) {
 		// this looks like one of the typical ISV error messages
 		fidoError = new fido2error.fido2Error(e.error.messageId + ": " + e.error.messageDescription);
-
+	} else if (e instanceof Error) {
+		fidoError = new fido2error.fido2Error(e.message);
 	} else {
 		// fallback to the generic error
 		fidoError = new fido2error.fido2Error(genericError);

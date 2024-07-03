@@ -280,12 +280,11 @@ function performAssertion(userId, authenticatorRecords) {
         if (userId == null) {
             delete assertionOptionsResponse.allowCredentials;
         }
-        logger.logWithTS("performAssertion: assertionOptionsResponse: " + JSON.stringify(assertionOptionsResponse));        
+        logger.logWithTS("performAssertion: assertionOptionsResponse: " + JSON.stringify(assertionOptionsResponse));
         let cro = fidoutils.assertionOptionsResponeToCredentialRequestOptions(assertionOptionsResponse);
         let spkc = fidoutils.processCredentialRequestOptions(cro, authenticatorRecords);
 
         logger.logWithTS("performAssertion sending assertion result to ISV: " + JSON.stringify(spkc));
-
         return commonServices.timedFetch(
             process.env.ISV_TENANT_ENDPOINT + "/v2.0/factors/fido2/relyingparties/" + rpUuid + "/assertion/result",
             {

@@ -6,7 +6,7 @@ const fido2client = require('./isvclient.js');
 const logger = require('./logging.js');
 const commonServices = require('./commonservices.js');
 
-const printStats = true;
+const printStats = false;
 
 //
 // MAIN entry point starts here

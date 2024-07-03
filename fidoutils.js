@@ -585,7 +585,7 @@ function processCredentialRequestOptions(cro, authenticatorRecords, up = true, u
 		spkc.getClientExtensionResults = {};
 	} else {
 		// error
-		throw new Error("Assertion options allowCredentials list did not contain any credential id known to the software authenticator");
+		throw new Error("Authenticator does not have any credentials for this login");
 		spkc = null;
 	}
 	
