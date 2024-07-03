@@ -2,9 +2,6 @@
 *.pem
 *.csr
 *.srl
+*.aaguid
 encpass.txt
 fidotest-*.json
-rootCA.*
-packed.*
-u2f.*
-self.*

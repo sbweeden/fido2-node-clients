@@ -11,7 +11,7 @@ const printStats = true;
 //
 // MAIN entry point starts here
 //
-let attestationFormat = "packed-self"; // one of "packed", "packed-self", "fido-u2f"
+let attestationFormat = "packed"; // one of "packed", "packed-self", "fido-u2f", "none"
 let authenticatorRecords = {};
 
 fido2client.performAttestation(process.env.ISV_USERNAME, attestationFormat)
