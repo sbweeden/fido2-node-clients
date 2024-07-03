@@ -1,6 +1,7 @@
 // commonservices.js
 
 const fido2error = require('./fido2error.js');
+const logger = require('./logging.js');
 
 // used for stats
 var statsMap = {};
@@ -35,7 +36,7 @@ function timedFetch(url, fetchOptions) {
 			if (!result.ok) {
 				logger.logWithTS("timedFetch unexpected result. status: " + result.status);
 				return result.text().then((txt) => {
-					throw new fido2error.fido2Error("Unexpected HTTP response code: " + result.status + (txt != null ? (" body: " + txt) : ""));
+					throw new fido2error.fido2Error("Unexpected HTTP response code: " + result.status + (txt != null ? (" body: " + txt) : "") + " url: " + url);
 				});
 			} else {
 				return result.json();
@@ -46,13 +47,51 @@ function timedFetch(url, fetchOptions) {
 	});
 }
 
-function resetStats(req, rsp) {
+function resetStats() {
 	statsMap = {};
-	rsp.json(statsMap);
 }
 
-function getStats(req, rsp) {
-	rsp.json(statsMap);
+function getStats() {
+	return statsMap;
+}
+
+function standardDeviation(values){
+    var avg = average(values);
+    
+    var squareDiffs = values.map(function(value){
+      var diff = value - avg;
+      var sqrDiff = diff * diff;
+      return sqrDiff;
+    });
+    
+    var avgSquareDiff = average(squareDiffs);
+
+    var stdDev = Math.sqrt(avgSquareDiff);
+    return stdDev;
+  }
+
+  function average(data){
+    var sum = data.reduce(function(sum, value){
+      return sum + value;
+    }, 0);
+
+    var avg = sum / data.length;
+    return avg;
+  }		
+
+function getStatsSummary() {
+    let result = {};
+    Object.keys(statsMap).forEach((o) => {
+        result[o] = {
+            "numberOfRequests": statsMap[o].length,
+            "min": Math.min(...statsMap[o]),
+            "max": Math.max(...statsMap[o]),
+            "standardDeviation": standardDeviation(statsMap[o]).toFixed(2),
+            "averageResponseTimeMsec": average(statsMap[o]).toFixed(2)
+        };
+    });
+
+    return result;
 }
 
 function normaliseError(methodName, e, genericError) {
@@ -65,7 +104,7 @@ function normaliseError(methodName, e, genericError) {
 		// seems to already be a fido2Error
 		fidoError = e;
 	} else if (e != null && e.error != null && e.error.messageId != null && e.error.messageDescription != null) {
-		// this looks like one of the typical CI error messages
+		// this looks like one of the typical ISV error messages
 		fidoError = new fido2error.fido2Error(e.error.messageId + ": " + e.error.messageDescription);
 
 	} else {
@@ -80,5 +119,6 @@ module.exports = {
     timedFetch: timedFetch,
 	resetStats: resetStats,
 	getStats: getStats,
+    getStatsSummary: getStatsSummary,
     normaliseError: normaliseError
 };
