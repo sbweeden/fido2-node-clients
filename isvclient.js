@@ -91,7 +91,7 @@ function usernameToId(username) {
 				throw new fido2error.fido2Error("userId could not be resolved");
 			}
 		}).catch((e) => {
-            let fido2Error = normaliseError("userIdToUsername", e, "Error resolving username: " + username);
+            let fido2Error = commonServices.normaliseError("userIdToUsername", e, "Error resolving username: " + username);
 			logger.logWithTS("usernameToId: Unable to resolve id for username: " + username + " error: " + JSON.stringify(fido2Error));
 		});
 	} 
