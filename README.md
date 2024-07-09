@@ -8,7 +8,7 @@ Follow the steps in this section for one-time setup of your client.
 
 ### Establishing FIDO Attestation artifacts
 
-The first step to using the assets in this repository is to generate yourself a set of attestation keys for the various attestation types supported by the client. Scripts that run on MacOS 
+The first step to using the assets in this repository is to generate yourself a set of attestation keys for the various attestation types supported by the client. A script is provided that run on MacOS and Linux.
 
 After cloning the repository change into the `certs` directory and run the `./generate_attestation_certs.sh` script. An example is shown here:
 ```
@@ -45,11 +45,15 @@ The script also generates a configuration variable called `FIDO2_CLIENT_CONFIG` 
 ### Creating the .env file
 
 Change back to the top-level directory of the repository code, and copy the `.env.example` file to a new file `.env`
+
 The `.env` file will need to be populated with configuration data for either your ISV tenant or ISVA server. The instructions in this readme are going to focus on configuration for **ISV (SaaS)**, as each ISVA environment can be a little different. The ISVA configuration has been tested against a demonstration site that I manange (https://fidointerop.securitypoc.com) and provided it is up and running you are welcome to try running the client against that site as well. Follow the instructions in the `.env.example` file for how to setup the client against `fidointerop.securitypoc.com`.
 
 #### Updating .env for your ISV Tenant
 
 Edit the `.env` file and update the values of `ISV_TENANT_ENDPOINT`, `RPID` and `ORIGIN` to match your tenant.
+
+Set the value of the `FIDO2_CLIENT_CONFIG` in the `.env` file to the value produced in the output of the `generate_attestation_certs.sh` script run during th previous step.
+
 
 Pick an ISV username (you can look for your own username by checking the `AZN_CRED_PRINCIPAL_NAME` in the https://YOUR_TENANT/ivcreds credential viewer) and set the username value in the variable `ISV_USERNAME`.
 
