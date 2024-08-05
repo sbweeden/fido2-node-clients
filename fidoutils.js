@@ -4,13 +4,31 @@ const cbor = require('cbor'); // https://www.npmjs.com/package/cbor
 const jsrsasign = require('jsrsasign'); // https://www.npmjs.com/package/jsrsasign
 const CryptoJS = require('crypto-js'); // https://www.npmjs.com/package/crypto-js
 
-// This environment variable needs to be set.
-let fidoutilsConfig = null;
-if (process.env.FIDO2_CLIENT_CONFIG != null) {
-	fidoutilsConfig = JSON.parse(process.env.FIDO2_CLIENT_CONFIG);
-	fidoutilsConfig.origin = process.env.ORIGIN;
-}
 
+              // This environment variable needs to be set.
+              let fidoutilsConfig = {
+                encryptionPassphrase:
+                  "f4cb3ee38884c773c150dc968c3a65f981368090",
+                "fido-u2f": {
+                  privateKeyHex:
+                    "62deb044984edbd7bd461a825155ff63c13725e6bc6d0e136ca231d529d6e477",
+                  publicKeyHex:
+                    "04e14b6685dd4c00b7549df8208585e1309f23943226cb87d58ea7a04fc6e7e00135c7abcab2b6c3d7cd9cd193fae645450aad0585280efa6d6542ed102afa27d2",
+                  cert: "MIIBpTCCAUqgAwIBAgIUA2Mz7WrpO/HpR4/xttNx9Od89DkwCgYIKoZIzj0EAwIwLjELMAkGA1UEBhMCVVMxDDAKBgNVBAoMA0lCTTERMA8GA1UEAwwIRklET1RFU1QwIBcNMjQwNzIyMjM1NzIwWhgPMjA1MTEyMDcyMzU3MjBaMDAxCzAJBgNVBAYTAlVTMQwwCgYDVQQKDANJQk0xEzARBgNVBAMMClUyRi1TSUdORVIwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAThS2aF3UwAt1Sd+CCFheEwnyOUMibLh9WOp6BPxufgATXHq8qytsPXzZzRk/rmRUUKrQWFKA76bWVC7RAq+ifSo0IwQDAdBgNVHQ4EFgQUXm4eBEO4auv35ys402DNLzrLQxkwHwYDVR0jBBgwFoAU5ZSOU5GvD0gPgO8MkGj321YWgJAwCgYIKoZIzj0EAwIDSQAwRgIhAK7Z9qyw+hL2zS8pRLMDq4vPri9tKGWTQpmViOWl7x9AAiEAxJ5FJw1fp+OhcNeSrdYqpumeCLfZdib1SaPySEaNcvI=",
+                },
+				origin: "https://fidointerop.securitypoc.com", 
+                packed: {
+                  aaguid: "2f23568d-0b91-4f00-af90-ad782c4f2a1a",
+                  privateKeyHex:
+                    "3fbfb6a4d1e4714dcf3e609ee89f7352e414e3d6936887f9af98dd99318a2c09",
+                  publicKeyHex:
+                    "04ed1b28b173c81e3bb4365051c962edef75d10f1921929273e9805c830271a3d46b5fbb243ff02af50737d870131318e9892e148633ee96e8b3ad4e5f81e565a1",
+                  cert: "MIIB2DCCAX+gAwIBAgIUA2Mz7WrpO/HpR4/xttNx9Od89DowCgYIKoZIzj0EAwIwLjELMAkGA1UEBhMCVVMxDDAKBgNVBAoMA0lCTTERMA8GA1UEAwwIRklET1RFU1QwIBcNMjQwNzIyMjM1NzIwWhgPMjA1MTEyMDcyMzU3MjBaMFcxCzAJBgNVBAYTAlVTMQwwCgYDVQQKDANJQk0xIjAgBgNVBAsMGUF1dGhlbnRpY2F0b3IgQXR0ZXN0YXRpb24xFjAUBgNVBAMMDVBBQ0tFRC1TSUdORVIwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAATtGyixc8geO7Q2UFHJYu3vddEPGSGSknPpgFyDAnGj1GtfuyQ/8Cr1BzfYcBMTGOmJLhSGM+6W6LOtTl+B5WWho1AwTjAMBgNVHRMBAf8EAjAAMB0GA1UdDgQWBBRIFVFoMsvJeKJkJz2iVsm0HxE3PzAfBgNVHSMEGDAWgBTllI5Tka8PSA+A7wyQaPfbVhaAkDAKBggqhkjOPQQDAgNHADBEAiAvUViK/EVPwpRcT81RbE1/BIgh6xgvu3eppSkhpZ/FjAIgfqHGMNDtWmmQdkttoQjmUUWWy/0Sx2nYkf1EbQ158fU=",
+                },
+                "packed-self": {
+                  aaguid: "4301a917-d3ea-448d-be73-f931f6508829",
+                },
+              };
 // It should contain a JSON document like this:
 let exampleConfig = {
 	"encryptionPassphrase": "MySecret",
@@ -143,6 +161,7 @@ function attestationOptionsResponeToCredentialCreationOptions(o) {
 	 * required: rp, copy that 
 	 */
 	pkcco.rp = o.rp;
+	// console.log("publickeycredentials relying party is", pkcco.rp);
 	
 	/*
 	 * required: user, map that to the pkcco data types
@@ -220,6 +239,13 @@ function attestationOptionsResponeToCredentialCreationOptions(o) {
 	cco.publicKey = pkcco;
 
 	return cco;
+}
+
+function base64toBA(base64Str) {
+	return jsrsasign.b64toBA(base64Str);
+}
+function base64utobase64(base64Str) {
+	return jsrsasign.b64utob64(base64Str);
 }
 
 /*
@@ -676,5 +702,5 @@ module.exports = {
 	processCredentialCreationOptions: processCredentialCreationOptions,
 	assertionOptionsResponeToCredentialRequestOptions: assertionOptionsResponeToCredentialRequestOptions,
 	processCredentialRequestOptions: processCredentialRequestOptions,
-	bytesFromArray: bytesFromArray
+	bytesFromArray: bytesFromArray,base64toBA:base64toBA, base64utobase64:base64utobase64
 };
