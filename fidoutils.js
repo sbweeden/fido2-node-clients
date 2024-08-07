@@ -253,6 +253,12 @@ function base64utobase64(base64Str) {
 	return jsrsasign.b64utob64(base64Str);
 }
 
+function canAuthenticateWithCredId(credId) {
+	// try and use resolvePrivateKeyHexFromCredentialIdBytes and check the return 
+	// if candiateprivkeyhex is not null and candiateprivkeyhex length greather than zero
+	// return true, else return false
+}
+
 /*
  * Acting as the client+authenticator, prepare a FIDO2 server ServerPublicKeyCredential from a CredentialCreationOptions
  * See example at: https://fidoalliance.org/specs/fido-v2.0-rd-20180702/fido-server-v2.0-rd-20180702.html#example-authenticator-attestation-response
@@ -656,8 +662,8 @@ function processCredentialRequestOptions(
 			}
 		}
 	}
-
 	if (privKeyHex != null) {
+
 		// credential information
 		let ecdsa = new jsrsasign.KJUR.crypto.ECDSA({ "curve": "prime256v1" });
 		ecdsa.setPrivateKeyHex(privKeyHex);
