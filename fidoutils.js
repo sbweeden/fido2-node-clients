@@ -258,15 +258,22 @@ function canAuthenticateWithCredId(options) {
 	// if candiateprivkeyhex is not null and candiateprivkeyhex length greather than zero
 	// return true, else return false
 	console.log(options.publicKey.allowCredentials[0].id);
-
+	let privateKeyHexfromCandidateCredIdBytes;
+	let canAuthenticate = false;
 	if (options.publicKey.allowCredentials !== null && options.publicKey.allowCredentials.length > 0) {
 		for (let i = 0; i < options.publicKey.allowCredentials.length; i++) {
-			let candidateCredIdBytes = bytesFromArray(options.publicKey.allowCredentials[i].id);
-			let privateKeyHexfromCandidateCredIdBytes = resolvePrivateKeyHexFromCredentialIdBytes(candidateCredIdBytes);
+			let candidateCredId = options.publicKey.allowCredentials[i].id;
+			console.log("candidateCredId", candidateCredId);
+			privateKeyHexfromCandidateCredIdBytes = resolvePrivateKeyHexFromCredentialIdBytes(candidateCredId);
 			console.log("privateKeyHexfromCandidateCredIdBytes", privateKeyHexfromCandidateCredIdBytes);
-
+			if (privateKeyHexfromCandidateCredIdBytes !== null && privateKeyHexfromCandidateCredIdBytes.length > 0) {
+				canAuthenticate = true;
+				break;
+			}
 		}
 	}
+	console.log("canAuthenticate", canAuthenticate);
+	return canAuthenticate;
 }
 
 /*
