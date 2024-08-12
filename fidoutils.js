@@ -253,6 +253,29 @@ function base64utobase64(base64Str) {
 	return jsrsasign.b64utob64(base64Str);
 }
 
+function canAuthenticateWithCredId(options) {
+	// try and use resolvePrivateKeyHexFromCredentialIdBytes and check the return 
+	// if candiateprivkeyhex is not null and candiateprivkeyhex length greather than zero
+	// return true, else return false
+	console.log(options.publicKey.allowCredentials[0].id);
+	let privateKeyHexfromCandidateCredIdBytes;
+	let canAuthenticate = false;
+	if (options.publicKey.allowCredentials !== null && options.publicKey.allowCredentials.length > 0) {
+		for (let i = 0; i < options.publicKey.allowCredentials.length; i++) {
+			let candidateCredId = options.publicKey.allowCredentials[i].id;
+			console.log("candidateCredId", candidateCredId);
+			privateKeyHexfromCandidateCredIdBytes = resolvePrivateKeyHexFromCredentialIdBytes(candidateCredId);
+			console.log("privateKeyHexfromCandidateCredIdBytes", privateKeyHexfromCandidateCredIdBytes);
+			if (privateKeyHexfromCandidateCredIdBytes !== null && privateKeyHexfromCandidateCredIdBytes.length > 0) {
+				canAuthenticate = true;
+				break;
+			}
+		}
+	}
+	console.log("canAuthenticate", canAuthenticate);
+	return canAuthenticate;
+}
+
 /*
  * Acting as the client+authenticator, prepare a FIDO2 server ServerPublicKeyCredential from a CredentialCreationOptions
  * See example at: https://fidoalliance.org/specs/fido-v2.0-rd-20180702/fido-server-v2.0-rd-20180702.html#example-authenticator-attestation-response
@@ -656,8 +679,8 @@ function processCredentialRequestOptions(
 			}
 		}
 	}
-
 	if (privKeyHex != null) {
+
 		// credential information
 		let ecdsa = new jsrsasign.KJUR.crypto.ECDSA({ "curve": "prime256v1" });
 		ecdsa.setPrivateKeyHex(privKeyHex);
@@ -821,5 +844,5 @@ module.exports = {
 	processCredentialRequestOptions: processCredentialRequestOptions,
 	bytesFromArray: bytesFromArray,
 	base64toBA: base64toBA,
-	base64utobase64: base64utobase64
+	base64utobase64: base64utobase64, canAuthenticateWithCredId: canAuthenticateWithCredId
 };
