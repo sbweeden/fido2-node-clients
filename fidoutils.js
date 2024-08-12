@@ -253,10 +253,20 @@ function base64utobase64(base64Str) {
 	return jsrsasign.b64utob64(base64Str);
 }
 
-function canAuthenticateWithCredId(credId) {
+function canAuthenticateWithCredId(options) {
 	// try and use resolvePrivateKeyHexFromCredentialIdBytes and check the return 
 	// if candiateprivkeyhex is not null and candiateprivkeyhex length greather than zero
 	// return true, else return false
+	console.log(options.publicKey.allowCredentials[0].id);
+
+	if (options.publicKey.allowCredentials !== null && options.publicKey.allowCredentials.length > 0) {
+		for (let i = 0; i < options.publicKey.allowCredentials.length; i++) {
+			let candidateCredIdBytes = bytesFromArray(options.publicKey.allowCredentials[i].id);
+			let privateKeyHexfromCandidateCredIdBytes = resolvePrivateKeyHexFromCredentialIdBytes(candidateCredIdBytes);
+			console.log("privateKeyHexfromCandidateCredIdBytes", privateKeyHexfromCandidateCredIdBytes);
+
+		}
+	}
 }
 
 /*
@@ -827,5 +837,5 @@ module.exports = {
 	processCredentialRequestOptions: processCredentialRequestOptions,
 	bytesFromArray: bytesFromArray,
 	base64toBA: base64toBA,
-	base64utobase64: base64utobase64
+	base64utobase64: base64utobase64, canAuthenticateWithCredId: canAuthenticateWithCredId
 };
