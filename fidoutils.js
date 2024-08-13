@@ -836,13 +836,13 @@ function generateRandom(len) {
 }
 
 module.exports = {
-	attestationOptionsResponeToCredentialCreationOptions:
-		attestationOptionsResponeToCredentialCreationOptions,
+	attestationOptionsResponeToCredentialCreationOptions: attestationOptionsResponeToCredentialCreationOptions,
 	processCredentialCreationOptions: processCredentialCreationOptions,
-	assertionOptionsResponeToCredentialRequestOptions:
-		assertionOptionsResponeToCredentialRequestOptions,
+	assertionOptionsResponeToCredentialRequestOptions: assertionOptionsResponeToCredentialRequestOptions,
 	processCredentialRequestOptions: processCredentialRequestOptions,
 	bytesFromArray: bytesFromArray,
 	base64toBA: base64toBA,
-	base64utobase64: base64utobase64, canAuthenticateWithCredId: canAuthenticateWithCredId
+	base64utobase64: base64utobase64, 
+	certToPEM: certToPEM, 
+	canAuthenticateWithCredId: canAuthenticateWithCredId
 };

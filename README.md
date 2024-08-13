@@ -42,6 +42,16 @@ This script produces three JSON FIDO Metadata files (in MDS3 format), which can 
 
 The script also generates a configuration variable called `FIDO2_CLIENT_CONFIG` which will be used in the next step.
 
+Note: There is also a Node.JS equivalent of the bash script provided called `generate_attestation_certs.js`. This should be functionally equivalent to `generate_attestation_certs.sh` except that it doesn't generate unnecessary CSR files, nor does it require some of the input files used by the openssl command line utility. You can use it as an alternative to `generate_attestation_certs.sh` simply by using Node.JS on the command line:
+
+```
+[certs] $ node generate_attestation_certs.js
+<equivalent output as above>
+```
+
+Both the bash script and the Node.JS script are idemptotent - you can run them multiple times and they will only regenerate artifacts that do not already exist.
+
+
 ### Creating the .env file
 
 Change back to the top-level directory of the repository code, and copy the `.env.example` file to a new file `.env`

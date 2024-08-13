@@ -110,9 +110,7 @@ fi
 ICON_TEXT=$(cat "$ICONFILE")
 ROOTCA_TXT=$(cat "$ROOTCACERT" | grep -v "BEGIN CERTIFICATE" | grep -v "END CERTIFICATE" | tr -d '\n')
 PACKED_AAGUID=$(cat "$PACKED_ATTESTATION_AAGUID" | tr '[:upper:]' '[:lower:]')
-PACKED_AAGUID_NO_DASHES=$(cat "$PACKED_ATTESTATION_AAGUID" | tr '[:upper:]' '[:lower:]' | sed -e 's/-//g')
 SELF_AAGUID=$(cat "$SELF_ATTESTATION_AAGUID" | tr '[:upper:]' '[:lower:]')
-SELF_AAGUID_NO_DASHES=$(cat "$SELF_ATTESTATION_AAGUID" | tr '[:upper:]' '[:lower:]' | sed -e 's/-//g')
 
 
 if [ ! -e "$U2F_METADATA" ]
