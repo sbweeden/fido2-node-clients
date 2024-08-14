@@ -33,8 +33,9 @@ function timedFetch(url, fetchOptions) {
 		}
 		if (returnAsJSON) {
 			if (!result.ok) {
-				logger.logWithTS("timedFetch unexpected result. status: " + result.status);
+				//logger.logWithTS("timedFetch unexpected result. status: " + result.status);
 				return result.text().then((txt) => {
+					logger.logWithTS("timedFetch unexpected result. status: " + result.status + " body: " + txt);
 					throw new fido2error.fido2Error("Unexpected HTTP response code: " + result.status + (txt != null ? (" body: " + txt) : "") + " url: " + url);
 				});
 			} else {

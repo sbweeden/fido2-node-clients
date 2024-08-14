@@ -337,8 +337,11 @@ function processCredentialCreationOptions(
 		0x40;
 	authData.push(flags);
 
-	// add 4 bytes of counter - we use time in epoch seconds as monotonic counter
-	let now = new Date().getTime() / 1000;
+	// add 4 bytes of signature counter - we use 0, to suggest we don't support the counter.
+	// This makes it easier to do asynchronous load testing with the same registration since
+	// we don't have to serialize each authentication attempt for a given authenticator.
+	// An alternative is to use the current time in epoch seconds as a monotonic counter.
+	let now = 0; // new Date().getTime() / 1000;
 	authData.push(
 		((now & 0xff000000) >> 24) & 0xff,
 		((now & 0x00ff0000) >> 16) & 0xff,
@@ -611,8 +614,11 @@ function processCredentialRequestOptions(
 	let flags = (up ? 0x01 : 0x00) | (uv ? 0x04 : 0x00);
 	authData.push(flags);
 
-	// add 4 bytes of signature counter - we use the current time in epoch seconds as the monotonic counter
-	let now = new Date().getTime() / 1000;
+	// add 4 bytes of signature counter - we use 0, to suggest we don't support the counter.
+	// This makes it easier to do asynchronous load testing with the same registration since
+	// we don't have to serialize each authentication attempt for a given authenticator.
+	// An alternative is to use the current time in epoch seconds as a monotonic counter.
+	let now = 0;  // new Date().getTime() / 1000;
 	authData.push(
 		((now & 0xff000000) >> 24) & 0xff,
 		((now & 0x00ff0000) >> 16) & 0xff,
