@@ -276,6 +276,15 @@ function canAuthenticateWithCredId(options) {
 	return canAuthenticate;
 }
 
+function getFidoUtilsConfig() {
+	return fidoutilsConfig;
+}
+
+function setFidoUtilsConfig(newObj) {
+	fidoutilsConfig = newObj;
+	return newObj;
+}
+
 /*
  * Acting as the client+authenticator, prepare a FIDO2 server ServerPublicKeyCredential from a CredentialCreationOptions
  * See example at: https://fidoalliance.org/specs/fido-v2.0-rd-20180702/fido-server-v2.0-rd-20180702.html#example-authenticator-attestation-response
@@ -848,7 +857,9 @@ module.exports = {
 	processCredentialRequestOptions: processCredentialRequestOptions,
 	bytesFromArray: bytesFromArray,
 	base64toBA: base64toBA,
-	base64utobase64: base64utobase64, 
-	certToPEM: certToPEM, 
-	canAuthenticateWithCredId: canAuthenticateWithCredId
+	base64utobase64: base64utobase64,
+	certToPEM: certToPEM,
+	canAuthenticateWithCredId: canAuthenticateWithCredId,
+	getFidoUtilsConfig: getFidoUtilsConfig,
+	setFidoUtilsConfig: setFidoUtilsConfig
 };
