@@ -73,7 +73,7 @@ function performAttestation(username, attestationFormat) {
 
         // add stuff required (and optional) for ISVA
         credentialCreationResult.spkc["nickname"] = "NodeClient - " + attestationOptionsResponse.challenge;
-        credentialCreationResult.spkc["getTransports"] = ["platform"];
+        credentialCreationResult.spkc["getTransports"] = ["node"];
 		logger.logWithTS("performAttestation sending attestation result to ISVA: " + JSON.stringify(credentialCreationResult.spkc));
 
         result.credentialCreationResult = credentialCreationResult;
