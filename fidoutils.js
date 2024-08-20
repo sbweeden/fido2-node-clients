@@ -276,7 +276,7 @@ function canAuthenticateWithCredId(options) {
 	return canAuthenticate;
 }
 
-function getFidoUtilsConfigfromNodeClient() {
+function getFidoUtilsConfig() {
 	return fidoutilsConfig;
 }
 
@@ -860,6 +860,6 @@ module.exports = {
 	base64utobase64: base64utobase64,
 	certToPEM: certToPEM,
 	canAuthenticateWithCredId: canAuthenticateWithCredId,
-	getFidoUtilsConfigfromNodeClient: getFidoUtilsConfigfromNodeClient,
+	getFidoUtilsConfig: getFidoUtilsConfig,
 	setFidoUtilsConfig: setFidoUtilsConfig
 };
