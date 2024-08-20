@@ -277,14 +277,11 @@ function canAuthenticateWithCredId(options) {
 }
 
 function getFidoUtilsConfigfromNodeClient() {
-	console.log("get method", fidoutilsConfig);
 	return fidoutilsConfig;
 }
 
 function setFidoUtilsConfig(newObj) {
 	fidoutilsConfig = newObj;
-	// newObj["origin"] = window.location.origin;
-	console.log("new fidoutilsConfig using setter method", newObj);
 	return newObj;
 }
 
@@ -862,5 +859,7 @@ module.exports = {
 	base64toBA: base64toBA,
 	base64utobase64: base64utobase64,
 	certToPEM: certToPEM,
-	canAuthenticateWithCredId: canAuthenticateWithCredId, getFidoUtilsConfigfromNodeClient: getFidoUtilsConfigfromNodeClient, setFidoUtilsConfig: setFidoUtilsConfig
+	canAuthenticateWithCredId: canAuthenticateWithCredId,
+	getFidoUtilsConfigfromNodeClient: getFidoUtilsConfigfromNodeClient,
+	setFidoUtilsConfig: setFidoUtilsConfig
 };
