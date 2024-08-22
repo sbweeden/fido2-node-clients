@@ -38,6 +38,20 @@ ENCRYPTION_PASSPHRASE_FILE="encpass.txt"
 ICONFILE="icon.txt"
 
 #
+# Generate AAGUIDS for packed and self attestation
+#
+if [ ! -e "$PACKED_ATTESTATION_AAGUID" ]
+then
+  echo "Creating packed attestation aaguid: $PACKED_ATTESTATION_AAGUID"
+  uuidgen  > "$PACKED_ATTESTATION_AAGUID"
+fi
+if [ ! -e "$SELF_ATTESTATION_AAGUID" ]
+then
+  echo "Creating self attestation aaguid: $SELF_ATTESTATION_AAGUID"
+  uuidgen > "$SELF_ATTESTATION_AAGUID"
+fi
+
+#
 # Generate a Root CA key and certificate
 #
 if [ ! -e "$ROOTCAKEY" ]
@@ -79,6 +93,18 @@ then
   echo "Creating packed key: $PACKED_ATTESTATION_KEY"
   openssl ecparam -out "$PACKED_ATTESTATION_KEY" -name prime256v1 -genkey
 fi
+# Generate CSR config file, AAGUID extension is injected as part of the last line added
+PACKED_AAGUID=$(cat "$PACKED_ATTESTATION_AAGUID" | tr '[:upper:]' '[:lower:]')
+PACKED_AAGUID_NODASH=$(echo "$PACKED_AAGUID" | tr -d '-' | tr '[:lower:]' '[:upper:]')
+cat > "$PACKED_ATTESTATION_CONFIG" << "EOF"
+[req]
+distinguished_name=dn
+[dn]
+[ext]
+basicConstraints=critical,CA:FALSE
+EOF
+echo "1.3.6.1.4.1.45724.1.1.4=DER:0410$PACKED_AAGUID_NODASH" >> "$PACKED_ATTESTATION_CONFIG"
+
 if [ ! -e "$PACKED_ATTESTATION_CSR" ]
 then
   echo "Creating packed CSR: $PACKED_ATTESTATION_CSR"
@@ -90,19 +116,6 @@ then
   openssl x509 -req -in "$PACKED_ATTESTATION_CSR" -extfile "$PACKED_ATTESTATION_CONFIG" -extensions ext -CA "$ROOTCACERT" -CAkey "$ROOTCAKEY" -passin pass:"$PASSPHRASE" -CAcreateserial -out "$PACKED_ATTESTATION_CERT" -days 9999 -sha256
 fi
 
-#
-# Generate AAGUIDS for packed and self attestation
-#
-if [ ! -e "$PACKED_ATTESTATION_AAGUID" ]
-then
-  echo "Creating packed attestation aaguid: $PACKED_ATTESTATION_AAGUID"
-  uuidgen  > "$PACKED_ATTESTATION_AAGUID"
-fi
-if [ ! -e "$SELF_ATTESTATION_AAGUID" ]
-then
-  echo "Creating self attestation aaguid: $SELF_ATTESTATION_AAGUID"
-  uuidgen > "$SELF_ATTESTATION_AAGUID"
-fi
 
 #
 # Generate the FIDO MDS3 metadata documents

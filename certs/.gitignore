@@ -3,5 +3,6 @@
 *.csr
 *.srl
 *.aaguid
+packed.config
 encpass.txt
 fidotest-*.json

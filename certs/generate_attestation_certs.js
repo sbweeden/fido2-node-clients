@@ -67,6 +67,27 @@ function generateRandomSerialNumberHex() {
 //
 
 //
+// Generate AAGUIDs for packed and self attestation
+//
+let packedAttestationAAGUID = null;
+if (!fs.existsSync(PACKED_ATTESTATION_AAGUID)) {
+    packedAttestationAAGUID = crypto.randomUUID().toLowerCase();
+    fs.writeFileSync(PACKED_ATTESTATION_AAGUID, packedAttestationAAGUID);
+} else {
+    packedAttestationAAGUID = fs.readFileSync(PACKED_ATTESTATION_AAGUID).toString().replaceAll('\n','').toLowerCase();
+}
+//console.log("packedAttestationAAGUID: " + packedAttestationAAGUID);
+
+let selfAttestationAAGUID = null;
+if (!fs.existsSync(SELF_ATTESTATION_AAGUID)) {
+    selfAttestationAAGUID = crypto.randomUUID().toLowerCase();
+    fs.writeFileSync(SELF_ATTESTATION_AAGUID, selfAttestationAAGUID);
+} else {
+    selfAttestationAAGUID = fs.readFileSync(SELF_ATTESTATION_AAGUID).toString().replaceAll('\n','').toLowerCase();
+}
+//console.log("selfAttestationAAGUID: " + selfAttestationAAGUID);
+
+//
 // Generate (or read from existing files) a Root CA keypair and certificate
 //
 let rootCAPublicKeyPEM = null;
@@ -215,6 +236,7 @@ if (!fs.existsSync(PACKED_ATTESTATION_KEY)) {
 //console.log('packedPublicKeyPEM: ' + packedPublicKeyPEM);
 //console.log('packedPrivateKeyPEM: ' + packedPrivateKeyPEM);
 
+
 /*
 // packedCSR is not required for this implementation
 let packedCSRPEM = null;
@@ -229,7 +251,8 @@ if (!fs.existsSync(PACKED_ATTESTATION_CSR)) {
         sigalg: "SHA256withECDSA",
         sbjprvkey: prvKey,
         extreq: [
-            {extname: "basicConstraints", cA: false, critical: true}
+            {extname: "basicConstraints", cA: false, critical: true},
+            {extname:"1.3.6.1.4.1.45724.1.1.4",extn:("04120410"+packedAttestationAAGUID.replaceAll('-','').toUpperCase())}
         ]
     });
     packedCSRPEM = packedCSR.getPEM();
@@ -260,7 +283,8 @@ if (!fs.existsSync(PACKED_ATTESTATION_CERT)) {
         ext: [
             {extname: "subjectKeyIdentifier", kid: packedPublicKeyPEM},
             {extname: "authorityKeyIdentifier", kid: rootCAPublicKeyPEM},
-            {extname: "basicConstraints", cA: false, critical: true}
+            {extname: "basicConstraints", cA: false, critical: true},
+            {extname:"1.3.6.1.4.1.45724.1.1.4",extn:("0410"+packedAttestationAAGUID.replaceAll('-','').toUpperCase())}
         ],
         sigalg: "SHA256withECDSA",
         cakey: rootCAPrivateKeyPEM
@@ -272,28 +296,6 @@ if (!fs.existsSync(PACKED_ATTESTATION_CERT)) {
     packedAttestationCertificatePEM = fs.readFileSync(PACKED_ATTESTATION_CERT).toString();
 }
 //console.log('packedAttestationCertificatePEM: ' + packedAttestationCertificatePEM);
-
-
-//
-// Generate AAGUIDs for packed and self attestation
-//
-let packedAttestationAAGUID = null;
-if (!fs.existsSync(PACKED_ATTESTATION_AAGUID)) {
-    packedAttestationAAGUID = crypto.randomUUID().toLowerCase();
-    fs.writeFileSync(PACKED_ATTESTATION_AAGUID, packedAttestationAAGUID);
-} else {
-    packedAttestationAAGUID = fs.readFileSync(PACKED_ATTESTATION_AAGUID).toString().replaceAll('\n','').toLowerCase();
-}
-//console.log("packedAttestationAAGUID: " + packedAttestationAAGUID);
-
-let selfAttestationAAGUID = null;
-if (!fs.existsSync(SELF_ATTESTATION_AAGUID)) {
-    selfAttestationAAGUID = crypto.randomUUID().toLowerCase();
-    fs.writeFileSync(SELF_ATTESTATION_AAGUID, selfAttestationAAGUID);
-} else {
-    selfAttestationAAGUID = fs.readFileSync(SELF_ATTESTATION_AAGUID).toString().replaceAll('\n','').toLowerCase();
-}
-//console.log("selfAttestationAAGUID: " + selfAttestationAAGUID);
 
 
 //
