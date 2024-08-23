@@ -1,6 +1,7 @@
 // fidoutils.js
 
 const cbor = require('cbor'); // https://www.npmjs.com/package/cbor
+const tinycbor = require('@levischuck/tiny-cbor'); // https://www.npmjs.com/package/@levischuck/tiny-cbor
 const jsrsasign = require('jsrsasign'); // https://www.npmjs.com/package/jsrsasign
 const CryptoJS = require('crypto-js'); // https://www.npmjs.com/package/crypto-js
 
@@ -42,6 +43,38 @@ let exampleConfig = {
  * Collection of functions useful to emulate a FIDO2 client and authenticator
  */
 
+// CBOR encodes an object, returning results as a byte array
+function myCBOREncode(o) {
+	result = bytesFromArray((new Uint8Array(cbor.encode(o))), 0, -1);
+	return result;
+}
+
+// Some data structures in FIDO authenticators that are arrays of bytes
+// need to be encoded as a CBOR byte string rather than a CBOR array of unsigned integers.
+// Our CBOR encoder will encode Buffer to byte string, so this utility function
+// is called when what we have is a byte array and what we need CBOR encoded is a byte string.
+function prepareBAForCBOR(ba) {
+	return (new Uint8Array(ba)).buffer;
+}
+
+//
+// CBOR encoding a COSE key is a bit tricky because not only are co-ordinate values
+// required to be byte strings, its also reauired that the key values are integers.
+// You can't express integer keys in a JSON object, so we first convert to a Map
+// with integer keys so that the CBOR encoder correctly encodes those keys as integers.
+//
+function coseKeyToMap(coseKey) {
+	// create a Map, treating object keys as integers (notice call to parseInt below) and converting byte array values to 
+	// a Buffer so that CBOR encoding of a COSE key results in integer keys and coordinates as byte strings
+	let coseKeyMap = new Map();
+	for (const [k,v] of Object.entries(coseKey)) {
+		let mapKey = (Number.isNaN(parseInt(k)) ? k : parseInt(k));
+		let mapValue = ((v instanceof Array) ? prepareBAForCBOR(v) : v);
+		coseKeyMap.set(mapKey,mapValue);
+	}
+	return coseKeyMap;
+}
+
 /**
  * Extracts the bytes from an array beginning at index start, and continuing until
  * index end-1 or the end of the array is reached. Pass -1 for end if you want to
@@ -60,6 +93,7 @@ function bytesFromArray(o, start, end) {
 	}
 	return result;
 }
+
 
 /**
  * Returns the bytes of a sha256 message digest of either a string or byte array
@@ -421,11 +455,7 @@ function processCredentialCreationOptions(
 	attestedCredentialData.push(...credIdBytes);
 
 	// credential public key - take bytes from CBOR encoded COSE key
-	let credPublicKeyBytes = bytesFromArray(
-		new Uint8Array(cbor.encode(credPublicKeyCOSE)),
-		0,
-		-1
-	);
+	let credPublicKeyBytes = myCBOREncode(coseKeyToMap(credPublicKeyCOSE));
 	attestedCredentialData.push(...credPublicKeyBytes);
 
 	// add attestedCredentialData to authData
@@ -469,15 +499,11 @@ function processCredentialCreationOptions(
 	let attestationObject = {
 		"fmt": attestationFormat,
 		"attStmt": attStmt,
-		"authData": authData
+		"authData": prepareBAForCBOR(authData)
 	};
 
 	// add the base64url of the CBOR encoding of the attestationObject to the response
-	saar.attestationObject = jsrsasign.hextob64u(
-		jsrsasign.BAtohex(
-			bytesFromArray(new Uint8Array(cbor.encode(attestationObject)), 0, -1)
-		)
-	);
+	saar.attestationObject = jsrsasign.hextob64u(jsrsasign.BAtohex(myCBOREncode(attestationObject)));
 
 	// construct ServerPublicKeyCredential fields
 
@@ -789,7 +815,7 @@ function buildFidoU2FAttestationStatement(
 	sig.updateHex(jsrsasign.BAtohex(sigBase));
 	let sigValueHex = sig.sign();
 
-	attStmt.sig = jsrsasign.b64toBA(jsrsasign.hextob64(sigValueHex));
+	attStmt.sig = prepareBAForCBOR(jsrsasign.b64toBA(jsrsasign.hextob64(sigValueHex)));
 	return attStmt;
 }
 
@@ -824,7 +850,7 @@ function buildPackedAttestationStatement(
 		attestationCert.readCertPEM(
 			certToPEM(jsrsasign.b64toBA(fidoutilsConfig.packed.cert))
 		);
-		attStmt.x5c = [jsrsasign.b64toBA(jsrsasign.hextob64(attestationCert.hex))];
+		attStmt.x5c = [ prepareBAForCBOR(jsrsasign.b64toBA(jsrsasign.hextob64(attestationCert.hex))) ];
 	}
 
 	// build sigBase
@@ -836,7 +862,7 @@ function buildPackedAttestationStatement(
 	sig.updateHex(jsrsasign.BAtohex(sigBase));
 	let sigValueHex = sig.sign();
 
-	attStmt.sig = jsrsasign.b64toBA(jsrsasign.hextob64(sigValueHex));
+	attStmt.sig = prepareBAForCBOR(jsrsasign.b64toBA(jsrsasign.hextob64(sigValueHex)));
 	return attStmt;
 }
 
@@ -847,6 +873,363 @@ function generateRandom(len) {
 	for (let i = 0; i < len; i++) {
 		result = result + chars.charAt(Math.floor(Math.random() * chars.length));
 	}
+	return result;
+}
+
+
+/*
+* Override the CBOR decode method with a slightly modified version that handles remaining bytes in a 
+* way that allows implementation of cbor.decodeVariable
+*/
+cbor.decode = function(data, tagger, simpleValue) {
+	var dataView = new DataView(data);
+	var offset = 0;
+  
+	if (typeof tagger !== "function")
+	  tagger = function(value) { return value; };
+	if (typeof simpleValue !== "function")
+	  simpleValue = function() { return undefined; };
+  
+	function commitRead(length, value) {
+	  offset += length;
+	  return value;
+	}
+	function readArrayBuffer(length) {
+	  return commitRead(length, new Uint8Array(data, offset, length));
+	}
+	function readFloat16() {
+	  var tempArrayBuffer = new ArrayBuffer(4);
+	  var tempDataView = new DataView(tempArrayBuffer);
+	  var value = readUint16();
+  
+	  var sign = value & 0x8000;
+	  var exponent = value & 0x7c00;
+	  var fraction = value & 0x03ff;
+  
+	  if (exponent === 0x7c00)
+		exponent = 0xff << 10;
+	  else if (exponent !== 0)
+		exponent += (127 - 15) << 10;
+	  else if (fraction !== 0)
+		return (sign ? -1 : 1) * fraction * POW_2_24;
+  
+	  tempDataView.setUint32(0, sign << 16 | exponent << 13 | fraction << 13);
+	  return tempDataView.getFloat32(0);
+	}
+	function readFloat32() {
+	  return commitRead(4, dataView.getFloat32(offset));
+	}
+	function readFloat64() {
+	  return commitRead(8, dataView.getFloat64(offset));
+	}
+	function readUint8() {
+	  return commitRead(1, dataView.getUint8(offset));
+	}
+	function readUint16() {
+	  return commitRead(2, dataView.getUint16(offset));
+	}
+	function readUint32() {
+	  return commitRead(4, dataView.getUint32(offset));
+	}
+	function readUint64() {
+	  return readUint32() * POW_2_32 + readUint32();
+	}
+	function readBreak() {
+	  if (dataView.getUint8(offset) !== 0xff)
+		return false;
+	  offset += 1;
+	  return true;
+	}
+	function readLength(additionalInformation) {
+	  if (additionalInformation < 24)
+		return additionalInformation;
+	  if (additionalInformation === 24)
+		return readUint8();
+	  if (additionalInformation === 25)
+		return readUint16();
+	  if (additionalInformation === 26)
+		return readUint32();
+	  if (additionalInformation === 27)
+		return readUint64();
+	  if (additionalInformation === 31)
+		return -1;
+	  throw "Invalid length encoding";
+	}
+	function readIndefiniteStringLength(majorType) {
+	  var initialByte = readUint8();
+	  if (initialByte === 0xff)
+		return -1;
+	  var length = readLength(initialByte & 0x1f);
+	  if (length < 0 || (initialByte >> 5) !== majorType)
+		throw "Invalid indefinite length element";
+	  return length;
+	}
+  
+	function appendUtf16Data(utf16data, length) {
+	  for (var i = 0; i < length; ++i) {
+		var value = readUint8();
+		if (value & 0x80) {
+		  if (value < 0xe0) {
+			value = (value & 0x1f) <<  6
+				  | (readUint8() & 0x3f);
+			length -= 1;
+		  } else if (value < 0xf0) {
+			value = (value & 0x0f) << 12
+				  | (readUint8() & 0x3f) << 6
+				  | (readUint8() & 0x3f);
+			length -= 2;
+		  } else {
+			value = (value & 0x0f) << 18
+				  | (readUint8() & 0x3f) << 12
+				  | (readUint8() & 0x3f) << 6
+				  | (readUint8() & 0x3f);
+			length -= 3;
+		  }
+		}
+  
+		if (value < 0x10000) {
+		  utf16data.push(value);
+		} else {
+		  value -= 0x10000;
+		  utf16data.push(0xd800 | (value >> 10));
+		  utf16data.push(0xdc00 | (value & 0x3ff));
+		}
+	  }
+	}
+  
+	function decodeItem() {
+	  var initialByte = readUint8();
+	  var majorType = initialByte >> 5;
+	  var additionalInformation = initialByte & 0x1f;
+	  var i;
+	  var length;
+  
+	  if (majorType === 7) {
+		switch (additionalInformation) {
+		  case 25:
+			return readFloat16();
+		  case 26:
+			return readFloat32();
+		  case 27:
+			return readFloat64();
+		}
+	  }
+  
+	  length = readLength(additionalInformation);
+	  if (length < 0 && (majorType < 2 || 6 < majorType))
+		throw "Invalid length";
+  
+	  switch (majorType) {
+		case 0:
+		  return length;
+		case 1:
+		  return -1 - length;
+		case 2:
+		  if (length < 0) {
+			var elements = [];
+			var fullArrayLength = 0;
+			while ((length = readIndefiniteStringLength(majorType)) >= 0) {
+			  fullArrayLength += length;
+			  elements.push(readArrayBuffer(length));
+			}
+			var fullArray = new Uint8Array(fullArrayLength);
+			var fullArrayOffset = 0;
+			for (i = 0; i < elements.length; ++i) {
+			  fullArray.set(elements[i], fullArrayOffset);
+			  fullArrayOffset += elements[i].length;
+			}
+			return fullArray;
+		  }
+		  return readArrayBuffer(length);
+		case 3:
+		  var utf16data = [];
+		  if (length < 0) {
+			while ((length = readIndefiniteStringLength(majorType)) >= 0)
+			  appendUtf16Data(utf16data, length);
+		  } else
+			appendUtf16Data(utf16data, length);
+		  return String.fromCharCode.apply(null, utf16data);
+		case 4:
+		  var retArray;
+		  if (length < 0) {
+			retArray = [];
+			while (!readBreak())
+			  retArray.push(decodeItem());
+		  } else {
+			retArray = new Array(length);
+			for (i = 0; i < length; ++i)
+			  retArray[i] = decodeItem();
+		  }
+		  return retArray;
+		case 5:
+		  var retObject = {};
+		  for (i = 0; i < length || length < 0 && !readBreak(); ++i) {
+			var key = decodeItem();
+			retObject[key] = decodeItem();
+		  }
+		  return retObject;
+		case 6:
+		  return tagger(decodeItem(), length);
+		case 7:
+		  switch (length) {
+			case 20:
+			  return false;
+			case 21:
+			  return true;
+			case 22:
+			  return null;
+			case 23:
+			  return undefined;
+			default:
+			  return simpleValue(length);
+		  }
+	  }
+	}
+  
+	var ret = decodeItem();
+  
+	/*
+	 * Here is the modification: deal with remaining bytes a different way so we can implement decodeVariable
+	 */
+	//if (offset !== datalen) {
+	//  throw "Remaining bytes";
+	//}
+	if (offset !== data.byteLength) {
+		var result = {};
+		result["decodedObj"] = ret;
+		result["datalen"] = data.byteLength;
+		result["offset"] = offset;
+		throw result;
+	  }
+  
+	return ret;
+  }
+  
+  /*
+  * Added this extra CBOR function to allow extraction of CBOR from a larger byte array
+  */
+  cbor.decodeVariable = function(data, tagger, simpleValue) {
+	  try {
+		  var result = { "decodedObj": cbor.decode(data, tagger, simpleValue), "offset": -1 };
+		  return result;
+	  } catch (e) {
+		  if (e["decodedObj"] != null && e["offset"] != null) {
+			  // this is a partial decode with remaining bytes
+			  return e;
+		  } else {
+			  throw e;
+		  }
+	  }
+  }   
+/**
+ * Convert a 4-byte array to a uint assuming big-endian encoding
+ * 
+ * @param buf
+ */
+function bytesToUInt32BE(buf) {
+	var result = 0;
+	if (buf != null && buf.length == 4) {
+		result = ((buf[0] & 0xFF) << 24) | ((buf[1] & 0xFF) << 16) | ((buf[2] & 0xFF) << 8) | (buf[3] & 0xFF);
+		return result;
+	}
+	return result;
+}
+
+/**
+* Used to introspect a result for debug/printing purposes. Not actually used in construction of
+* an object used by the client.
+*/
+function unpackAuthData(authDataBytes) {
+	var result = { 
+		"status": false, 
+		"rawBytes": null,
+		"rpIdHashBytes": null, 
+		"flags": 0, 
+		"counter": 0, 
+		"attestedCredData": null,
+		"extensions": null
+	};
+	
+	result["rawBytes"] = authDataBytes;
+	
+	if (authDataBytes != null && authDataBytes.length >= 37) {
+		result["rpIdHashBytes"] = bytesFromArray(authDataBytes, 0, 32);
+		result["flags"] = authDataBytes[32];
+		result["counter"] = bytesToUInt32BE(bytesFromArray(authDataBytes, 33, 37));
+				
+		var nextByteIndex = 37;
+		
+		// check flags to see if there is attested cred data and/or extensions
+		
+		// bit 6 of flags - Indicates whether the authenticator added attested credential data.
+		if (result["flags"] & 0x40) {
+			result["attestedCredData"] = {};
+			
+			// are there enough bytes to read aaguid?
+			if (authDataBytes.length >= (nextByteIndex + 16)) {
+				result["attestedCredData"]["aaguid"] = bytesFromArray(authDataBytes, nextByteIndex, (nextByteIndex+16));
+				nextByteIndex += 16;
+				
+				// are there enough bytes for credentialIdLength?
+				if (authDataBytes.length >= (nextByteIndex + 2)) {
+					var credentialIdLengthBytes = bytesFromArray(authDataBytes, nextByteIndex, (nextByteIndex+2));
+					nextByteIndex += 2;
+					var credentialIdLength = credentialIdLengthBytes[0] * 256 + credentialIdLengthBytes[1] 
+					result["attestedCredData"]["credentialIdLength"] = credentialIdLength;
+					
+					// are there enough bytes for the credentialId?
+					if (authDataBytes.length >= (nextByteIndex + credentialIdLength)) {
+						result["attestedCredData"]["credentialId"] = bytesFromArray(authDataBytes, nextByteIndex, (nextByteIndex+credentialIdLength));
+						nextByteIndex += credentialIdLength;
+						
+						var remainingBytes = bytesFromArray(authDataBytes, nextByteIndex, -1);
+						
+						//
+						// try CBOR decoding the remaining bytes. 
+						// NOTE: There could be both credentialPublicKey and extensions objects
+						// so we use this special decodeVariable that Shane wrote to deal with
+						// remaining bytes.
+						//
+						try {
+							var decodeResult = cbor.decodeVariable((new Uint8Array(remainingBytes)).buffer);
+							result["attestedCredData"]["credentialPublicKey"] = decodeResult["decodedObj"];
+							nextByteIndex += (decodeResult["offset"] == -1 ? remainingBytes.length : decodeResult["offset"]);
+						} catch (e) {
+							console.log("Error CBOR decoding credentialPublicKey: " + e);
+							nextByteIndex = -1; // to force error checking
+						}
+					} else {
+						console.log("unPackAuthData encountered authDataBytes not containing enough bytes for credentialId in attested credential data");
+					}					
+				} else {
+					console.log("unPackAuthData encountered authDataBytes not containing enough bytes for credentialIdLength in attested credential data");
+				}				
+			} else {
+				console.log("unPackAuthData encountered authDataBytes not containing enough bytes for aaguid in attested credential data");
+			}
+		}
+		
+		// bit 7 of flags - Indicates whether the authenticator has extensions.
+		if (nextByteIndex > 0 && result["flags"] & 0x80) {
+			try {
+				result["extensions"] = cbor.decode((new Uint8Array(bytesFromArray(authDataBytes, nextByteIndex, -1))).buffer);
+				// must have worked
+				nextByteIndex = authDataBytes.length;
+			} catch (e) {
+				console.log("Error CBOR decoding extensions");
+			}
+		}
+		
+		// we should be done - make sure we processed all the bytes
+		if (nextByteIndex == authDataBytes.length) {
+			result["status"] = true;
+		} else {
+			console.log("Remaining bytes in unPackAuthData. nextByteIndex: " + nextByteIndex + " authDataBytes.length: " + authDataBytes.length);
+		}
+	} else {
+		console.log("unPackAuthData encountered authDataBytes not at least 37 bytes long. Actual length: " + authDataBytes.length);
+	}
+
 	return result;
 }
 
@@ -861,5 +1244,6 @@ module.exports = {
 	certToPEM: certToPEM,
 	canAuthenticateWithCredId: canAuthenticateWithCredId,
 	getFidoUtilsConfig: getFidoUtilsConfig,
-	setFidoUtilsConfig: setFidoUtilsConfig
+	setFidoUtilsConfig: setFidoUtilsConfig,
+	unpackAuthData: unpackAuthData
 };

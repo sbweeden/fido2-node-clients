@@ -6,12 +6,12 @@ const fido2client = require('./isvclient.js');
 const logger = require('./logging.js');
 const commonServices = require('./commonservices.js');
 
-const printStats = true;
+const printStats = false;
 
 //
 // MAIN entry point starts here
 //
-let attestationFormats = ["packed-self" ]; // To have this example create one of each, use [ "packed", "packed-self", "fido-u2f", "none" ]
+let attestationFormats = ["packed" ]; // To have this example create one of each, use [ "packed", "packed-self", "fido-u2f", "none" ]
 let authenticatorRecords = {};
 attestationFormats.forEach((attestationFormat) => {
     
@@ -33,10 +33,10 @@ attestationFormats.forEach((attestationFormat) => {
         }
     
         return Promise.all(allPromises);
-    }).then((assertionResults) => {
-        //logger.logWithTS("assertionResultResponse: " + JSON.stringify(assertionResult));
-        //logger.logWithTS("==============================================================");
-        //logger.logWithTS("authenticatorRecords: " + JSON.stringify(authenticatorRecords));
+    }).then((assertionResultResponses) => {
+        logger.logWithTS("assertionResultResponses: " + JSON.stringify(assertionResultResponses));
+        logger.logWithTS("==============================================================");
+        logger.logWithTS("authenticatorRecords: " + JSON.stringify(authenticatorRecords));
         if (printStats) {
             logger.logWithTS("======================= STATS =======================");
             logger.logWithTS(JSON.stringify(commonServices.getStatsSummary()));

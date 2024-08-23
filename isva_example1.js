@@ -11,7 +11,7 @@ const printStats = false;
 //
 // MAIN entry point starts here
 //
-let attestationFormats = ["packed-self" ]; // To have this example create one of each, use [ "packed", "packed-self", "fido-u2f", "none" ]
+let attestationFormats = ["packed" ]; // To have this example create one of each, use [ "packed", "packed-self", "fido-u2f", "none" ]
 let authenticatorRecords = {};
 
 attestationFormats.forEach((attestationFormat) => {
@@ -26,9 +26,16 @@ attestationFormats.forEach((attestationFormat) => {
 
         // now use it in a login flow - you can set userId to null here to perform a "usernameless" flow.
         let userId = attestationResult.attestationResultResponse.userId;
-        return fido2client.performAssertion(userId, authenticatorRecords);
-    }).then((assertionResult) => {
-        logger.logWithTS("assertionResultResponse: " + JSON.stringify(assertionResult));
+
+        let iterations = 1;
+        let allPromises = [];
+        for (let i = 0; i < iterations; i++) {
+            allPromises.push(fido2client.performAssertion(userId, authenticatorRecords));
+        }
+    
+        return Promise.all(allPromises);
+    }).then((assertionResultResponses) => {
+        logger.logWithTS("assertionResultResponses: " + JSON.stringify(assertionResultResponses));
         logger.logWithTS("==============================================================");
         logger.logWithTS("authenticatorRecords: " + JSON.stringify(authenticatorRecords));
         if (printStats) {

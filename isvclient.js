@@ -143,6 +143,69 @@ function rpIdTorpUuid(rpId) {
 	}
 }
 
+//
+// this debugging function just reformats what ISV accepts into the standardised toJSON
+// format that many other tools use for decoding
+//
+function isvSPKCToStandardPublicKeyCredentialJSON (spkc) {
+    // these are only required for this debugging method
+    const cbor = require('cbor'); // https://www.npmjs.com/package/cbor
+    const jsrsasign = require('jsrsasign'); // https://www.npmjs.com/package/jsrsasign
+
+    //
+    // copy
+    //
+    let result = JSON.parse(JSON.stringify(spkc));
+
+    //
+    // modify
+    //
+
+    // Delete rawId
+    delete result.rawId;
+
+    // Delete nickname
+    delete result.nickname;
+
+    // Delete enabled
+    delete result.enabled;
+
+    // Delete type
+    delete result.type;
+
+    // Change getClientExtensionResults to clientExtensionResults
+    result.clientExtensionResults = result.getClientExtensionResults;
+    delete result.getClientExtensionResults;
+
+    // Change getTransports to transports
+    result.transports = result.getTransports;
+    delete result.getTransports;
+
+    // Convert attestationObject from b64url to b64
+    result.response.attestationObject = jsrsasign.b64utob64(result.response.attestationObject);
+
+    // Add response.publicKeyAlgorithm and response.publicKey
+    let attestationObjectBytes = jsrsasign.b64toBA(jsrsasign.b64utob64(result.response.attestationObject));
+    let decodedAttestationObject = cbor.decode((new Uint8Array(attestationObjectBytes)).buffer);
+    let unpackedAuthData = fidoutils.unpackAuthData(fidoutils.bytesFromArray(decodedAttestationObject.authData, 0, -1));
+
+    result.response.publicKeyAlgorithm = unpackedAuthData.attestedCredData.credentialPublicKey["3"];
+    if (result.response.publicKeyAlgorithm == -7) {
+        // this is a dirty hack since we know we really only support EC256 keys in this client, 
+        // and this is what the ASN.1 of SubjectPublicKeyInfo of an EC key looks like
+        // Its this magic string followed by the bytes of the x and y coordinates
+        result.response.publicKey = jsrsasign.hextob64(
+            "3059301306072A8648CE3D020106082A8648CE3D03010703420004"+
+            jsrsasign.BAtohex(unpackedAuthData.attestedCredData.credentialPublicKey["-2"]) +
+            jsrsasign.BAtohex(unpackedAuthData.attestedCredData.credentialPublicKey["-3"])
+        );
+    } else {
+        console.log("isvSPKCToStandardPublicKeyCredentialJSON: Unexpected algorithm for public key: " +result.response.publicKeyAlgorithm);
+    }
+
+    return result;
+}
+
 function performAttestation(username, attestationFormat) {
 	let access_token = null;
     let rpUuid = null;
@@ -202,6 +265,7 @@ function performAttestation(username, attestationFormat) {
         credentialCreationResult.spkc["nickname"] = "NodeClient - " + attestationOptionsResponse.challenge;
         credentialCreationResult.spkc["enabled"] = true;
         credentialCreationResult.spkc["getTransports"] = ["node"];
+        //logger.logWithTS("Standard JSON format SPKC: " + JSON.stringify(isvSPKCToStandardPublicKeyCredentialJSON(credentialCreationResult.spkc)));
 		logger.logWithTS("performAttestation sending attestation result to ISV: " + JSON.stringify(credentialCreationResult.spkc));
 
         result.credentialCreationResult = credentialCreationResult;
