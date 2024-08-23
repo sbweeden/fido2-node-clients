@@ -1,7 +1,6 @@
 // fidoutils.js
 
 const cbor = require('cbor'); // https://www.npmjs.com/package/cbor
-const tinycbor = require('@levischuck/tiny-cbor'); // https://www.npmjs.com/package/@levischuck/tiny-cbor
 const jsrsasign = require('jsrsasign'); // https://www.npmjs.com/package/jsrsasign
 const CryptoJS = require('crypto-js'); // https://www.npmjs.com/package/crypto-js
 
