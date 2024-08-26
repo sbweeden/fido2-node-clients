@@ -797,7 +797,7 @@ function buildFidoU2FAttestationStatement(
 	);
 
 	// populate x5c of attStmt with one entry - the bytes of the self-signed attestation cert
-	attStmt.x5c = [jsrsasign.b64toBA(jsrsasign.hextob64(attestationCert.hex))];
+	attStmt.x5c = [prepareBAForCBOR(jsrsasign.b64toBA(jsrsasign.hextob64(attestationCert.hex)))];
 
 	// build sigBase
 	let rpidhashBytes = bytesFromArray(authData, 0, 32);
