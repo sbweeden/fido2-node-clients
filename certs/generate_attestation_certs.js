@@ -3,7 +3,7 @@
 // 
 
 //
-// This script generates a self-signed CA, then signs other certs for U2F and PACKED attestation
+// This script generates a self-signed CA, then signs other certs for U2F, PACKED and TPM attestation
 // It also generates MDS3 metadata files for use with your FIDO server and a JSON FIDO2_CLIENT_CONFIG
 // parameter that you can use in the .env file for the clients in the parent directory.
 //
@@ -19,17 +19,26 @@ let ROOTCADN="/C=US/O=IBM/CN=FIDOTEST"
 
 let U2F_ATTESTATION_DN="/C=US/O=IBM/CN=U2F-SIGNER"
 let U2F_ATTESTATION_KEY="u2f.key"
-//let U2F_ATTESTATION_CSR="u2f.csr"
 let U2F_ATTESTATION_CERT="u2f.pem"
 let U2F_METADATA="fidotest-u2f.json"
 
 let PACKED_ATTESTATION_DN="/C=US/O=IBM/OU=Authenticator Attestation/CN=PACKED-SIGNER"
 let PACKED_ATTESTATION_KEY="packed.key"
-//let PACKED_ATTESTATION_CSR="packed.csr"
 let PACKED_ATTESTATION_CERT="packed.pem"
-//let PACKED_ATTESTATION_CONFIG="packed.config"
 let PACKED_ATTESTATION_AAGUID="packed.aaguid"
 let PACKED_METADATA="fidotest-packed.json"
+
+let TPM_INTER_DN="/CN=FIDOTEST-TPM-INTERMEDIATE"
+let TPM_INTER_KEY="tpminter.key"
+let TPM_INTER_PUB="tpminter.pub"
+let TPM_INTER_CERT="tpminter.pem"
+
+let TPM_ATTESTATION_DN=""
+let TPM_ATTESTATION_KEY="tpm.key"
+let TPM_ATTESTATION_PUB="tpm.pub"
+let TPM_ATTESTATION_CERT="tpm.pem"
+let TPM_ATTESTATION_AAGUID="tpm.aaguid"
+let TPM_METADATA="fidotest-tpm.json"
 
 let SELF_ATTESTATION_AAGUID="self.aaguid"
 let SELF_METADATA="fidotest-self.json"
@@ -67,7 +76,7 @@ function generateRandomSerialNumberHex() {
 //
 
 //
-// Generate AAGUIDs for packed and self attestation
+// Generate AAGUIDs for packed, tpm and self attestation
 //
 let packedAttestationAAGUID = null;
 if (!fs.existsSync(PACKED_ATTESTATION_AAGUID)) {
@@ -77,6 +86,15 @@ if (!fs.existsSync(PACKED_ATTESTATION_AAGUID)) {
     packedAttestationAAGUID = fs.readFileSync(PACKED_ATTESTATION_AAGUID).toString().replaceAll('\n','').toLowerCase();
 }
 //console.log("packedAttestationAAGUID: " + packedAttestationAAGUID);
+
+let tpmAttestationAAGUID = null;
+if (!fs.existsSync(TPM_ATTESTATION_AAGUID)) {
+    tpmAttestationAAGUID = crypto.randomUUID().toLowerCase();
+    fs.writeFileSync(TPM_ATTESTATION_AAGUID, tpmAttestationAAGUID);
+} else {
+    tpmAttestationAAGUID = fs.readFileSync(TPM_ATTESTATION_AAGUID).toString().replaceAll('\n','').toLowerCase();
+}
+//console.log("tpmAttestationAAGUID: " + tpmAttestationAAGUID);
 
 let selfAttestationAAGUID = null;
 if (!fs.existsSync(SELF_ATTESTATION_AAGUID)) {
@@ -161,28 +179,6 @@ if (!fs.existsSync(U2F_ATTESTATION_KEY)) {
 //console.log('u2fPublicKeyPEM: ' + u2fPublicKeyPEM);
 //console.log('u2fPrivateKeyPEM: ' + u2fPrivateKeyPEM);
 
-/*
-// u2fCSRPEM is not required for this implementation
-let u2fCSRPEM = null;
-if (!fs.existsSync(U2F_ATTESTATION_CSR)) {
-    console.log("Creating U2F CSR: " + U2F_ATTESTATION_CSR);
-    let pubKey = jsrsasign.KEYUTIL.getKey(u2fPublicKeyPEM);
-    let prvKey = jsrsasign.KEYUTIL.getKey(u2fPrivateKeyPEM);
-
-    let u2fCSR = new jsrsasign.KJUR.asn1.csr.CertificationRequest({
-        subject: {str: U2F_ATTESTATION_DN},
-        sbjpubkey: pubKey,
-        sigalg: "SHA256withECDSA",
-        sbjprvkey: prvKey
-    });
-    u2fCSRPEM = u2fCSR.getPEM();
-    fs.writeFileSync(U2F_ATTESTATION_CSR, u2fCSRPEM);
-} else {
-    u2fCSRPEM = fs.readFileSync(U2F_ATTESTATION_CSR).toString();
-}
-//console.log('u2fCSRPEM: ' + u2fCSRPEM);
-*/
-
 let u2fAttestationCertificatePEM = null;
 if (!fs.existsSync(U2F_ATTESTATION_CERT)) {
     console.log("Creating U2F certificate: " + U2F_ATTESTATION_CERT);
@@ -237,32 +233,6 @@ if (!fs.existsSync(PACKED_ATTESTATION_KEY)) {
 //console.log('packedPrivateKeyPEM: ' + packedPrivateKeyPEM);
 
 
-/*
-// packedCSR is not required for this implementation
-let packedCSRPEM = null;
-if (!fs.existsSync(PACKED_ATTESTATION_CSR)) {
-    console.log("Creating packed CSR: " + PACKED_ATTESTATION_CSR);
-    let pubKey = jsrsasign.KEYUTIL.getKey(packedPublicKeyPEM);
-    let prvKey = jsrsasign.KEYUTIL.getKey(packedPrivateKeyPEM);
-
-    let packedCSR = new jsrsasign.KJUR.asn1.csr.CertificationRequest({
-        subject: {str: PACKED_ATTESTATION_DN},
-        sbjpubkey: pubKey,
-        sigalg: "SHA256withECDSA",
-        sbjprvkey: prvKey,
-        extreq: [
-            {extname: "basicConstraints", cA: false, critical: true},
-            {extname:"1.3.6.1.4.1.45724.1.1.4",extn:("04120410"+packedAttestationAAGUID.replaceAll('-','').toUpperCase())}
-        ]
-    });
-    packedCSRPEM = packedCSR.getPEM();
-    fs.writeFileSync(PACKED_ATTESTATION_CSR, packedCSRPEM);
-} else {
-    packedCSRPEM = fs.readFileSync(PACKED_ATTESTATION_CSR).toString();
-}
-//console.log('packedCSRPEM: ' + packedCSRPEM);
-*/
-
 let packedAttestationCertificatePEM = null;
 if (!fs.existsSync(PACKED_ATTESTATION_CERT)) {
     console.log("Creating packed certificate: " + PACKED_ATTESTATION_CERT);
@@ -298,6 +268,135 @@ if (!fs.existsSync(PACKED_ATTESTATION_CERT)) {
 //console.log('packedAttestationCertificatePEM: ' + packedAttestationCertificatePEM);
 
 
+
+
+
+//
+// Generate (or read from existing files) a TPM intermediate key and certificate, signed by the rootCA
+//
+let tpmInterPublicKeyPEM = null;
+let tpmInterPrivateKeyPEM = null;
+if (!fs.existsSync(TPM_INTER_KEY)) {
+    console.log("Creating TPM Intermediate key: " + TPM_INTER_KEY);
+    let kp = jsrsasign.KEYUTIL.generateKeypair("RSA", "2048");
+    tpmInterPublicKeyPEM  = jsrsasign.KEYUTIL.getPEM(kp.pubKeyObj, "PKCS8PUB");
+    tpmInterPrivateKeyPEM  = jsrsasign.KEYUTIL.getPEM(kp.prvKeyObj, "PKCS8PRV");
+    fs.writeFileSync(TPM_INTER_KEY, tpmInterPrivateKeyPEM);
+    fs.writeFileSync(TPM_INTER_PUB, tpmInterPublicKeyPEM);
+} else {
+    // read in existing TPM intermediate private key PEM from file and extract public key and convert to PEM
+    tpmInterPrivateKeyPEM = fs.readFileSync(TPM_INTER_KEY).toString();
+    tpmInterPublicKeyPEM = fs.readFileSync(TPM_INTER_PUB).toString();
+}
+//console.log('tpmInterPublicKeyPEM: ' + tpmInterPublicKeyPEM);
+//console.log('tpmInterPrivateKeyPEM: ' + tpmInterPrivateKeyPEM);
+
+let tpmInterCertificatePEM = null;
+if (!fs.existsSync(TPM_INTER_CERT)) {
+    console.log("Creating TPM Intermediate certificate: " + TPM_INTER_CERT);
+
+    let notBeforeDate = new Date();
+    let notAfterDate = new Date();
+    // same as -days 9999 for openssl
+    notAfterDate.setDate(notAfterDate.getDate() + 9999);
+
+    let cert = new jsrsasign.asn1.x509.Certificate({
+        version: 3,
+        serial: {hex: generateRandomSerialNumberHex()},
+        subject: {str: TPM_INTER_DN},
+        issuer: {str: ROOTCADN},
+        notbefore: { type: 'gen', str: dateToASN1GeneralizedTime(notBeforeDate) },
+        notafter: { type: 'gen', str: dateToASN1GeneralizedTime(notAfterDate) },
+        sbjpubkey: tpmInterPublicKeyPEM,
+        ext: [
+            { extname: "keyUsage", critical: true, names: ["digitalSignature", "keyCertSign", "cRLSign"] },
+            // this is extendedKeyUsage 1.3.6.1.4.1.311.21.36, 2.23.133.8.3
+            { extname: "extKeyUsage", extn: "301206092B060104018237152406056781050803" },
+            {extname: "subjectKeyIdentifier", kid: tpmInterPublicKeyPEM},
+            {extname: "authorityKeyIdentifier", kid: rootCAPublicKeyPEM},
+            {extname: "basicConstraints", cA: true, critical: true, pathLen: 0},
+        ],
+        sigalg: "SHA256withECDSA",
+        cakey: rootCAPrivateKeyPEM
+    });
+
+    tpmInterCertificatePEM = cert.getPEM();
+    fs.writeFileSync(TPM_INTER_CERT, tpmInterCertificatePEM);
+} else {
+    tpmInterCertificatePEM = fs.readFileSync(TPM_INTER_CERT).toString();
+}
+//console.log('tpmInterCertificatePEM: ' + tpmInterCertificatePEM);
+
+//
+// Generate (or read from existing files) a TPM attestation key and certificate, signed by the TPM Intermediate key
+//
+let tpmPublicKeyPEM = null;
+let tpmPrivateKeyPEM = null;
+if (!fs.existsSync(TPM_ATTESTATION_KEY)) {
+    console.log("Creating TPM key: " + TPM_ATTESTATION_KEY);
+    let kp = jsrsasign.KEYUTIL.generateKeypair("RSA", "2048");
+    tpmPublicKeyPEM  = jsrsasign.KEYUTIL.getPEM(kp.pubKeyObj, "PKCS8PUB");
+    tpmPrivateKeyPEM  = jsrsasign.KEYUTIL.getPEM(kp.prvKeyObj, "PKCS8PRV");
+    fs.writeFileSync(TPM_ATTESTATION_KEY, tpmPrivateKeyPEM);
+    fs.writeFileSync(TPM_ATTESTATION_PUB, tpmPublicKeyPEM);
+} else {
+    // read in existing TPM private key PEM from file and extract public key and convert to PEM
+    tpmPrivateKeyPEM = fs.readFileSync(TPM_ATTESTATION_KEY).toString();
+    tpmPublicKeyPEM = fs.readFileSync(TPM_ATTESTATION_PUB).toString();
+}
+//console.log('tpmPublicKeyPEM: ' + tpmPublicKeyPEM);
+//console.log('tpmPrivateKeyPEM: ' + tpmPrivateKeyPEM);
+
+let tpmAttestationCertificatePEM = null;
+if (!fs.existsSync(TPM_ATTESTATION_CERT)) {
+    console.log("Creating TPM certificate: " + TPM_ATTESTATION_CERT);
+
+    let notBeforeDate = new Date();
+    let notAfterDate = new Date();
+    // same as -days 9999 for openssl
+    notAfterDate.setDate(notAfterDate.getDate() + 9999);
+
+    let certificateParameters = {
+        version: 3,
+        serial: {hex: generateRandomSerialNumberHex()},
+        issuer: {str: TPM_INTER_DN},
+        notbefore: { type: 'gen', str: dateToASN1GeneralizedTime(notBeforeDate) },
+        notafter: { type: 'gen', str: dateToASN1GeneralizedTime(notAfterDate) },
+        sbjpubkey: tpmPublicKeyPEM,
+        ext: [
+            { extname: "keyUsage", critical: true, names: ["digitalSignature"] },
+            { extname: "extKeyUsage", extn: "300706056781050803" },
+            {extname: "subjectAltName", 
+                critical: true, 
+                array: [
+                    {dn: "/2.23.133.2.3=id:1+2.23.133.2.2=IBMTPM+2.23.133.2.1=id:FFFFF1D0"}
+                ]
+            },
+            {extname: "subjectKeyIdentifier", kid: tpmPublicKeyPEM},
+            {extname: "authorityKeyIdentifier", kid: tpmInterPublicKeyPEM},
+            {extname: "basicConstraints", cA: false, critical: true},
+            {extname:"1.3.6.1.4.1.45724.1.1.4",extn:("0410"+tpmAttestationAAGUID.replaceAll('-','').toUpperCase())}
+        ],
+        sigalg: "SHA256withRSA",
+        cakey: tpmInterPrivateKeyPEM
+    };
+    // subject DN can be absent for the TPM attestation certificate
+    if (TPM_ATTESTATION_DN.length > 0) {
+        certificateParameters.subject = {
+            str: TPM_ATTESTATION_DN
+        };
+    }
+
+    let cert = new jsrsasign.asn1.x509.Certificate(certificateParameters);
+
+    tpmAttestationCertificatePEM = cert.getPEM();
+    fs.writeFileSync(TPM_ATTESTATION_CERT, tpmAttestationCertificatePEM);
+} else {
+    tpmAttestationCertificatePEM = fs.readFileSync(TPM_ATTESTATION_CERT).toString();
+}
+//console.log('tpmAttestationCertificatePEM: ' + tpmAttestationCertificatePEM);
+
+
 //
 // Generate the FIDO MDS3 metadata documents
 //
@@ -309,6 +408,10 @@ let u2fX509 = new jsrsasign.X509();
 u2fX509.readCertPEM(u2fAttestationCertificatePEM);
 let packedX509 = new jsrsasign.X509();
 packedX509.readCertPEM(packedAttestationCertificatePEM);
+let tpmInterX509 = new jsrsasign.X509();
+tpmInterX509.readCertPEM(tpmInterCertificatePEM);
+let tpmX509 = new jsrsasign.X509();
+tpmX509.readCertPEM(tpmAttestationCertificatePEM);
 
 let u2fMetadataJSON = null;
 if (!fs.existsSync(U2F_METADATA)) {
@@ -342,6 +445,24 @@ if (!fs.existsSync(PACKED_METADATA)) {
     fs.writeFileSync(PACKED_METADATA, JSON.stringify(packedMetadataJSON));
 } else {
     packedMetadataJSON = JSON.parse(fs.readFileSync(PACKED_METADATA).toString());
+}
+//console.log("packedMetadataJSON");
+//console.log(JSON.stringify(packedMetadataJSON));
+
+let tpmMetadataJSON = null;
+if (!fs.existsSync(TPM_METADATA)) {
+    tpmMetadataJSON = {
+        description: "FIDOTEST-TPM",
+        aaguid: tpmAttestationAAGUID,
+        protocolFamily: "fido2",
+        schema: 3,
+        attestationTypes: [ "attca" ],
+        attestationRootCertificates: [ rootCAText ],
+        icon: iconText
+    };
+    fs.writeFileSync(TPM_METADATA, JSON.stringify(tpmMetadataJSON));
+} else {
+    packedMetadataJSON = JSON.parse(fs.readFileSync(TPM_METADATA).toString());
 }
 //console.log("packedMetadataJSON");
 //console.log(JSON.stringify(packedMetadataJSON));
@@ -392,6 +513,13 @@ let fido2ClientConfigJSON = {
         "privateKeyHex": jsrsasign.KEYUTIL.getKey(packedPrivateKeyPEM).prvKeyHex,
         "publicKeyHex": jsrsasign.KEYUTIL.getKey(packedPrivateKeyPEM).pubKeyHex,
         "cert": jsrsasign.hextob64(packedX509.hex)
+    },
+    "tpm": {
+        "aaguid": tpmAttestationAAGUID,
+        "privateKeyPEM": tpmPrivateKeyPEM,
+        "publicKeyPEM": tpmPublicKeyPEM,
+        "cert": jsrsasign.hextob64(tpmX509.hex),
+        "tpmIntercert": jsrsasign.hextob64(tpmInterX509.hex)
     },
     "packed-self": {
         "aaguid": selfAttestationAAGUID

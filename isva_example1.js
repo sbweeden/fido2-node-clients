@@ -11,7 +11,7 @@ const printStats = false;
 //
 // MAIN entry point starts here
 //
-let attestationFormats = ["packed" ]; // To have this example create one of each, use [ "packed", "packed-self", "fido-u2f", "none" ]
+let attestationFormats = [ "packed", "packed-self", "tpm", "fido-u2f", "none" ]; // To have this example create one of each, use [ "packed", "packed-self", "tpm", "fido-u2f", "none" ]
 let authenticatorRecords = {};
 
 attestationFormats.forEach((attestationFormat) => {

@@ -490,6 +490,15 @@ function processCredentialCreationOptions(
 		);
 		// this is really packed, we only used packed-self internally to toggle the flag above
 		attestationFormat = "packed";
+	} else if (attestationFormat == "tpm") {
+		console.log("About to call buildTPMAttestationStatement");
+		attStmt = buildTPMAttestationStatement(
+			keypair,
+			clientDataHash,
+			authData,
+			credIdBytes
+		);
+		console.log("Done calling buildTPMAttestationStatement");
 	} else {
 		throw ("Unsupported attestationFormat: " + attestationFormat);
 	}
@@ -865,14 +874,186 @@ function buildPackedAttestationStatement(
 	return attStmt;
 }
 
-function generateRandom(len) {
-	// generates a random string of alpha-numerics
-	let chars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-	let result = "";
-	for (let i = 0; i < len; i++) {
-		result = result + chars.charAt(Math.floor(Math.random() * chars.length));
+// writes size then bytes, returns nextIndex + number of bytes written
+function writeSizedBytes(view, index, bytes) {
+	let result = index;
+
+	let len = (bytes != null ? bytes.length : 0);
+
+	// first two bytes are the size
+	view.setUint16(result, len);
+	result += 2;
+
+	// I'm sure there's more efficient ways, but this is easy to understand
+	if (len > 0) {
+		for (let i = 0; i < len; i++) {
+			view.setUint8(result, bytes[i]);
+			result += 1;
+		}
 	}
+
 	return result;
+}
+
+// writes digest (as Uint16 if >= 0) and handle bytes (if provided), returns nextIndex + number of bytes written
+function writeTPM2BName(view, index, digestUint16, handleBytes) {
+	let result = index;
+	let len = 0;
+
+	if (digestUint16 >= 0 && handleBytes != null && handleBytes.length > 0) {
+		len = 2 + handleBytes.length;
+	}
+	view.setUint16(result, len);
+	result += 2;
+	if (len > 0) {
+		view.setUint16(result, digestUint16);
+		result += 2;
+		// I'm sure there's more efficient ways, but this is easy to understand
+		for (let i = 0; i < handleBytes.length; i++) {
+			view.setUint8(result, handleBytes[i]);
+			result += 1;
+		}	
+	}
+
+	return result;
+}
+
+function buildTPMAttestationStatement(
+	keypair,
+	clientDataHash,
+	authData,
+	credIdBytes
+) {
+	/*
+	 * we only support RS256 at the moment
+	 */
+	let attStmt = { alg: -257, ver: "2.0" };
+
+	// sign with tpm attestation private key
+	let rsaKey = new jsrsasign.KEYUTIL.getKey(fidoutilsConfig.tpm.privateKeyPEM);
+
+	// include the attestation cert and intermediate cert as x5c
+	let attestationCert = new jsrsasign.X509();
+	attestationCert.readCertPEM(
+		certToPEM(jsrsasign.b64toBA(fidoutilsConfig.tpm.cert))
+	);
+
+	let tpmInterCert = new jsrsasign.X509();
+	tpmInterCert.readCertPEM(
+		certToPEM(jsrsasign.b64toBA(fidoutilsConfig.tpm.tpmIntercert))
+	);
+	attStmt.x5c = [ 
+		prepareBAForCBOR(jsrsasign.b64toBA(jsrsasign.hextob64(attestationCert.hex))),
+		prepareBAForCBOR(jsrsasign.b64toBA(jsrsasign.hextob64(tpmInterCert.hex)))
+	];
+
+	//
+	// build pubArea
+	// See https://github.com/w3c/webauthn/issues/984
+	//
+	let paBuffer = new ArrayBuffer(2048); // should be plenty big enough
+	let paView = new DataView(paBuffer);
+	let nextIndex = 0;
+
+	// TPMI_ALG_PUBLIC type (2 bytes)
+	paView.setUint16(nextIndex, 0x0023); // TPM_ALG_ECC
+	nextIndex += 2;
+
+	// TPMI_ALG_HASH nameAlg (2 bytes)
+	paView.setUint16(nextIndex, 0x000B); // TPM_ALG_SHA256
+	nextIndex += 2;
+
+	// TPMA_OBJECT objectAttributes (4 bytes)
+	paView.setUint32(nextIndex, 0x60472); // copied verbatim as seen from a Windows TPM
+	nextIndex += 4;
+
+	// TPM2B_DIGEST authPolicy - not going to provide one
+	nextIndex = writeSizedBytes(paView, nextIndex, []);
+	
+	// TPMU_PUBLIC_PARMS parameters
+	// TPM_ALG_ECC so using TPMS_ECC_PARAMS (symmetric=16, scheme=16, curveID=3, kdf=16), as seen from a Windows Hello TPM with EC credential public key
+	paView.setUint16(nextIndex, 16);
+	nextIndex += 2;
+	paView.setUint16(nextIndex, 16);
+	nextIndex += 2;
+	paView.setUint16(nextIndex, 3);
+	nextIndex += 2;
+	paView.setUint16(nextIndex, 16);
+	nextIndex += 2;
+
+	// TPMU_PUBLIC_ID unique
+	// TPM_ALG_ECC so using TPMS_ECC_POINT (x and y coordinates of EC public key)
+	let xBytes = jsrsasign.b64toBA(jsrsasign.hextob64(keypair.pubKeyObj.getPublicKeyXYHex()["x"]));
+	let yBytes = jsrsasign.b64toBA(jsrsasign.hextob64(keypair.pubKeyObj.getPublicKeyXYHex()["y"]));
+	nextIndex = writeSizedBytes(paView, nextIndex, xBytes);
+	nextIndex = writeSizedBytes(paView, nextIndex, yBytes);
+
+	// extract those bytes and put into the attStmt
+	let pubAreaBytes = bytesFromArray(new Uint8Array(paBuffer), 0, nextIndex); 
+	attStmt.pubArea = prepareBAForCBOR(pubAreaBytes);
+
+	//
+	// build certInfo
+	// again see https://github.com/w3c/webauthn/issues/984
+	//
+	let ciBuffer = new ArrayBuffer(2048); // should be plenty big enough
+	let ciView = new DataView(ciBuffer);
+	nextIndex = 0;
+
+	// TPM_GENERATED magic
+	ciView.setUint32(nextIndex, 0xff544347);
+	nextIndex += 4;
+	
+	// TPMI_ST_ATTEST type must be TPM_ST_ATTEST_CERTIFY
+	ciView.setUint16(nextIndex, 0x8017);
+	nextIndex += 2;
+
+	// TPM2B_NAME qualifiedSigner
+	// choosing not to provide one
+	nextIndex = writeTPM2BName(ciView, nextIndex, -1, null);
+
+	// TPM2B_DATA extraData
+	// must be hash of concatenation of authenticatorData and clientDataHash
+	// we use sha256, as will be later identified in the certInfoAttestedNameDigest
+	let certInfoBase = authData.concat(clientDataHash);
+	let extraDataBytes = sha256(certInfoBase);
+	nextIndex = writeSizedBytes(ciView, nextIndex, extraDataBytes);
+
+	// TPMS_CLOCK_INFO clockInfo - we're going to set to zeros
+	ciView.setBigUint64(nextIndex, 0n); // clock UINT64
+	nextIndex += 8;
+	ciView.setUint32(nextIndex, 0x00); // resetCount UINT32
+	nextIndex += 4;
+	ciView.setUint32(nextIndex, 0x00); // restartCount UINT32
+	nextIndex += 4;
+	ciView.setUint8(nextIndex, 0x00); // safe TPMI_YES_NO (boolean)
+	nextIndex += 1;
+
+	// UINT64 firmwareVersion - we're going to set to zero
+	ciView.setBigUint64(nextIndex, 0n);
+	nextIndex += 8;
+
+	// TPMU_ATTEST attested (will be TPMS_CERTIFY_INFO)
+	// TPM2B_NAME name - handle is hash of pubArea bytes ; digest says we use sha256 (0x0B)
+	nextIndex = writeTPM2BName(ciView, nextIndex, 0x0B, sha256(pubAreaBytes));
+
+	// TPM2B_NAME qualifiedName - choosing not to provide one
+	nextIndex = writeTPM2BName(ciView, nextIndex, -1, null);
+
+	// extract those bytes and put into the attStmt
+	let certInfoBytes = bytesFromArray(new Uint8Array(ciBuffer), 0, nextIndex);
+	attStmt.certInfo = prepareBAForCBOR(certInfoBytes);
+
+	console.log("certInfoBytes(hex) : " + jsrsasign.BAtohex(certInfoBytes));
+
+	// generate and populate signature (the sigBase is signed with the attestation cert)
+	let sig = new jsrsasign.KJUR.crypto.Signature({ "alg": "SHA256withRSA" });
+	sig.init(rsaKey);
+	sig.updateHex(jsrsasign.BAtohex(certInfoBytes));
+	let sigValueHex = sig.sign();
+	attStmt.sig = prepareBAForCBOR(jsrsasign.b64toBA(jsrsasign.hextob64(sigValueHex)));
+
+	return attStmt;
 }
 
 
