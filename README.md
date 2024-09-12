@@ -8,7 +8,13 @@ Follow the steps in this section for one-time setup of your client.
 
 ### Establishing FIDO Attestation artifacts
 
-The first step to using the assets in this repository is to generate yourself a set of attestation keys for the various attestation types supported by the client. A script is provided that run on MacOS and Linux.
+The first step to using the assets in this repository is to generate yourself a set of attestation keys for the various attestation types supported by the client. 
+
+Two alternative yet compatible scripts have been provided to do this. 
+ - [certs/generate_attestation_certs.sh](certs/generate_attestation_certs.sh), a bash script which does have a dependency `openssl` and the `jq` command line utilities.
+ - [certs/generate_attestation_certs.js](certs/generate_attestation_certs.js), which you can run with NodeJS directly.
+ 
+ The instructions here show the use and output of the bash script, but ultimately either approach will result in usable artifacts.
 
 After cloning the repository change into the `certs` directory and run the `./generate_attestation_certs.sh` script. An example is shown here:
 ```
