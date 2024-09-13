@@ -356,6 +356,13 @@ if (!fs.existsSync(TPM_ATTESTATION_CERT)) {
     // same as -days 9999 for openssl
     notAfterDate.setDate(notAfterDate.getDate() + 9999);
 
+    //
+    // See table 2 in section 4.1 of the document at https://trustedcomputinggroup.org/resource/vendor-id-registry/
+    // uppercase is required when encoding in a SAN dirName
+    //
+    // FIDO's test value (not in the table yet)
+    let TPM_MANUFACTURER_ID = "FFFFF1D0".toUpperCase();
+
     let certificateParameters = {
         version: 3,
         serial: {hex: generateRandomSerialNumberHex()},
@@ -369,7 +376,7 @@ if (!fs.existsSync(TPM_ATTESTATION_CERT)) {
             {extname: "subjectAltName", 
                 critical: true, 
                 array: [
-                    {dn: "/2.23.133.2.3=id:1+2.23.133.2.2=IBMTPM+2.23.133.2.1=id:FFFFF1D0"}
+                    {dn: "/2.23.133.2.3=id:1+2.23.133.2.2=IBMTPM+2.23.133.2.1=id:"+TPM_MANUFACTURER_ID}
                 ]
             },
             {extname: "subjectKeyIdentifier", kid: tpmPublicKeyPEM},
