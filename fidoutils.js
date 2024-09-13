@@ -327,7 +327,8 @@ function processCredentialCreationOptions(
 	cco,
 	attestationFormat = "none",
 	up = true,
-	uv = true
+	uv = true,
+	includeJSONResponseElements = false
 ) {
 	let result = {
 		authenticatorRecord: {
@@ -512,6 +513,17 @@ function processCredentialCreationOptions(
 
 	// add the base64url of the CBOR encoding of the attestationObject to the response
 	saar.attestationObject = jsrsasign.hextob64u(jsrsasign.BAtohex(myCBOREncode(attestationObject)));
+
+	// if the JSON API elements are asked for, populate those
+	if (includeJSONResponseElements) {
+		saar.publicKeyAlgorithm = -7;
+		// this is b64u of bytes from PEM encoding format
+		saar.publicKey = jsrsasign.b64tob64u(
+			certToPEM(jsrsasign.b64toBA(jsrsasign.hextob64(keypair.pubKeyObj.pubKeyHex)))
+				.replace("-----BEGIN PUBLIC KEY-----","").replace("-----END PUBLIC KEY-----","").replaceAll("\n","")
+		);
+		saar.authenticatorData = jsrsasign.hextob64u(jsrsasign.BAtohex(authData));
+	}
 
 	// construct ServerPublicKeyCredential fields
 

@@ -23,6 +23,7 @@ if (process.env.ISVA_USER_ACCESS_TOKEN != null) {
 //
 // this debugging function just reformats what ISVA accepts into the standardised toJSON
 // format that many other tools use for decoding
+// see: https://w3c.github.io/webauthn/#dom-authenticatorattestationresponsejson-publickeyalgorithm
 //
 function isvaSPKCToStandardPublicKeyCredentialJSON (spkc) {
     // these are only required for this debugging method
@@ -54,17 +55,16 @@ function isvaSPKCToStandardPublicKeyCredentialJSON (spkc) {
     result.clientExtensionResults = result.getClientExtensionResults;
     delete result.getClientExtensionResults;
 
-    // Change getTransports to transports
-    result.transports = result.getTransports;
+    // Change getTransports to transports and move into response
+    result.response.transports = result.getTransports;
     delete result.getTransports;
 
-    // Convert attestationObject from b64url to b64
-    result.response.attestationObject = jsrsasign.b64utob64(result.response.attestationObject);
-
-    // Add response.publicKeyAlgorithm and response.publicKey
+    // Add response.authenticatorData, response.publicKeyAlgorithm, response.publicKey
     let attestationObjectBytes = jsrsasign.b64toBA(jsrsasign.b64utob64(result.response.attestationObject));
     let decodedAttestationObject = cbor.decode((new Uint8Array(attestationObjectBytes)).buffer);
     let unpackedAuthData = fidoutils.unpackAuthData(fidoutils.bytesFromArray(decodedAttestationObject.authData, 0, -1));
+
+    result.response.authenticatorData = jsrsasign.hextob64u(jsrsasign.BAtohex(unpackedAuthData.rawBytes));
 
     result.response.publicKeyAlgorithm = unpackedAuthData.attestedCredData.credentialPublicKey["3"];
     if (result.response.publicKeyAlgorithm == -7) {
