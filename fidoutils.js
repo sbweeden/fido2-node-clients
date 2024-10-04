@@ -286,26 +286,32 @@ function base64utobase64(base64Str) {
 	return jsrsasign.b64utob64(base64Str);
 }
 
+/**
+ * Attempts to resolve the private key from the candidate credential ID bytes.
+ * For each credential ID in the allowCredentials array, use resolvePrivateKeyHexFromCredentialIdBytes
+ * to retrieve the private key hex. If a non-null, non-empty private key is found, return true; 
+ * otherwise, return false.
+ */
 function canAuthenticateWithCredId(options) {
-	// try and use resolvePrivateKeyHexFromCredentialIdBytes and check the return 
-	// if candiateprivkeyhex is not null and candiateprivkeyhex length greather than zero
-	// return true, else return false
-	console.log(options.publicKey.allowCredentials[0].id);
 	let privateKeyHexfromCandidateCredIdBytes;
 	let canAuthenticate = false;
 	if (options.publicKey.allowCredentials !== null && options.publicKey.allowCredentials.length > 0) {
 		for (let i = 0; i < options.publicKey.allowCredentials.length; i++) {
-			let candidateCredId = options.publicKey.allowCredentials[i].id;
-			console.log("candidateCredId", candidateCredId);
-			privateKeyHexfromCandidateCredIdBytes = resolvePrivateKeyHexFromCredentialIdBytes(candidateCredId);
-			console.log("privateKeyHexfromCandidateCredIdBytes", privateKeyHexfromCandidateCredIdBytes);
-			if (privateKeyHexfromCandidateCredIdBytes !== null && privateKeyHexfromCandidateCredIdBytes.length > 0) {
-				canAuthenticate = true;
-				break;
+			try {
+				let candidateCredId = options.publicKey.allowCredentials[i].id;
+				console.log("candidateCredId", candidateCredId);
+				privateKeyHexfromCandidateCredIdBytes = resolvePrivateKeyHexFromCredentialIdBytes(candidateCredId);
+				console.log("privateKeyHexfromCandidateCredIdBytes", privateKeyHexfromCandidateCredIdBytes);
+				if (privateKeyHexfromCandidateCredIdBytes !== null && privateKeyHexfromCandidateCredIdBytes.length > 0) {
+					canAuthenticate = true;
+					break;
+				}
+			} catch (error) {
+				console.log("Error in canAuthenticateWithCredId method: ", error)
 			}
 		}
 	}
-	console.log("canAuthenticate", canAuthenticate);
+	console.log("Can authenticate: ", canAuthenticate);
 	return canAuthenticate;
 }
 
