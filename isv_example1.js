@@ -11,7 +11,10 @@ const printStats = false;
 //
 // MAIN entry point starts here
 //
-let attestationFormats = ["packed" ]; // To have this example create one of each, use [ "packed", "packed-self", "tpm", "fido-u2f", "none" ]
+// To have this example create one of each, use [ "packed", "packed-self", "tpm", "fido-u2f", "none" ]
+// To support compound attestation format, use the string "compound." + then dot-separate each of the formats you wish to include in the compound format
+//     For example "compound.tpm.packed", "compound.packed-self.none". You can have 2 or more compounded formats.
+let attestationFormats = ["compound.tpm.packed" ]; 
 let authenticatorRecords = {};
 attestationFormats.forEach((attestationFormat) => {
     

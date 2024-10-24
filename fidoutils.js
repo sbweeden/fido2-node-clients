@@ -492,14 +492,75 @@ function processCredentialCreationOptions(
 		// this is really packed, we only used packed-self internally to toggle the flag above
 		attestationFormat = "packed";
 	} else if (attestationFormat == "tpm") {
-		console.log("About to call buildTPMAttestationStatement");
 		attStmt = buildTPMAttestationStatement(
 			keypair,
 			clientDataHash,
 			authData,
 			credIdBytes
 		);
-		console.log("Done calling buildTPMAttestationStatement");
+	} else if (attestationFormat.startsWith("compound.")) {
+		// figure out what attestation formats are going to go into the compound one
+		attStmt = [];
+		let compoundFmts = attestationFormat.substring("compound.".length).split('.');
+		if (compoundFmts.length < 2) {
+			throw "compound attestation must contain two or more formats";
+		}
+		compoundFmts.forEach((fmt) => {
+				if (fmt == "none") {
+					// for none, just return an empty attStmt
+					attStmt.push({
+						fmt: "none",
+						attStmt: {}
+					});
+				} else if (fmt == "fido-u2f") {
+					attStmt.push({
+						fmt: "fido-u2f",
+						attStmt: buildFidoU2FAttestationStatement(
+							keypair,
+							clientDataHash,
+							authData,
+							credIdBytes
+						)
+					});
+				} else if (fmt == "packed") {
+					attStmt.push({
+						fmt: "packed",
+						attStmt: buildPackedAttestationStatement(
+							keypair,
+							clientDataHash,
+							authData,
+							credIdBytes,
+							false
+						)
+					});
+				} else if (fmt == "packed-self") {
+					attStmt.push({
+						fmt: "packed",
+						attStmt: buildPackedAttestationStatement(
+							keypair,
+							clientDataHash,
+							authData,
+							credIdBytes,
+							true
+						)
+					});
+				} else if (fmt == "tpm") {
+					attStmt.push({
+						fmt: "tpm",
+						attStmt: buildTPMAttestationStatement(
+							keypair,
+							clientDataHash,
+							authData,
+							credIdBytes
+						)
+					});
+				} else {
+					throw ("Unsupported compound attestationFormat: " + fmt);
+				}
+			});
+
+		// this is really compound, we only used compount-fmt1-fmt2-... internally to say what we are going to compose
+		attestationFormat = "compound";
 	} else {
 		throw ("Unsupported attestationFormat: " + attestationFormat);
 	}
