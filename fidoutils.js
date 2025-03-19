@@ -44,7 +44,7 @@ let exampleConfig = {
 
 // CBOR encodes an object, returning results as a byte array
 function myCBOREncode(o) {
-	result = bytesFromArray((new Uint8Array(cbor.encode(o))), 0, -1);
+	result = bytesFromArray((new Uint8Array(cbor.encodeCanonical(o))), 0, -1);
 	return result;
 }
 
@@ -396,14 +396,14 @@ function processCredentialCreationOptions(
 	let attestedCredentialData = [];
 
 	// aaguid - 16 bytes, if we have one defined use it, otherwise all zeros
-
+	let lookupFormat = attestationFormat;
 	let aaguid =
-		fidoutilsConfig[attestationFormat] == null ||
-			fidoutilsConfig[attestationFormat].aaguid == null
+		fidoutilsConfig[lookupFormat] == null ||
+			fidoutilsConfig[lookupFormat].aaguid == null
 			? null
 			: jsrsasign.b64toBA(
 				jsrsasign.hextob64(
-					fidoutilsConfig[attestationFormat].aaguid.replace(/-/g, "")
+					fidoutilsConfig[lookupFormat].aaguid.replace(/-/g, "")
 				)
 			);
 	if (aaguid == null) {
@@ -424,7 +424,7 @@ function processCredentialCreationOptions(
 		keypair.prvKeyObj.prvKeyHex
 	);
 
-	// store the private/public  key, credentialID and userHandle
+	// store the private/public key, credentialID and userHandle
 	result.authenticatorRecord.privateKeyHex = keypair.prvKeyObj.prvKeyHex;
 	result.authenticatorRecord.credentialID = jsrsasign.hextob64u(
 		jsrsasign.BAtohex(credIdBytes)
@@ -1117,8 +1117,6 @@ function buildTPMAttestationStatement(
 	let certInfoBytes = bytesFromArray(new Uint8Array(ciBuffer), 0, nextIndex);
 	attStmt.certInfo = prepareBAForCBOR(certInfoBytes);
 
-	console.log("certInfoBytes(hex) : " + jsrsasign.BAtohex(certInfoBytes));
-
 	// generate and populate signature (the sigBase is signed with the attestation cert)
 	let sig = new jsrsasign.KJUR.crypto.Signature({ "alg": "SHA256withRSA" });
 	sig.init(rsaKey);
@@ -1356,24 +1354,25 @@ cbor.decode = function(data, tagger, simpleValue) {
 	  }
   
 	return ret;
-  }
+}
   
-  /*
-  * Added this extra CBOR function to allow extraction of CBOR from a larger byte array
-  */
-  cbor.decodeVariable = function(data, tagger, simpleValue) {
-	  try {
-		  var result = { "decodedObj": cbor.decode(data, tagger, simpleValue), "offset": -1 };
-		  return result;
-	  } catch (e) {
-		  if (e["decodedObj"] != null && e["offset"] != null) {
-			  // this is a partial decode with remaining bytes
-			  return e;
-		  } else {
-			  throw e;
-		  }
-	  }
-  }   
+/*
+* Added this extra CBOR function to allow extraction of CBOR from a larger byte array
+*/
+cbor.decodeVariable = function(data, tagger, simpleValue) {
+	try {
+		var result = { "decodedObj": cbor.decode(data, tagger, simpleValue), "offset": -1 };
+		return result;
+	} catch (e) {
+		if (e["decodedObj"] != null && e["offset"] != null) {
+			// this is a partial decode with remaining bytes
+			return e;
+		} else {
+			throw e;
+		}
+	}
+}
+
 /**
  * Convert a 4-byte array to a uint assuming big-endian encoding
  * 
