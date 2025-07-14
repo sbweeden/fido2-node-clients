@@ -4,6 +4,7 @@
 *.csr
 *.srl
 *.aaguid
+compound.aaguid
 packed.config
 tpminter.config
 tpm.config

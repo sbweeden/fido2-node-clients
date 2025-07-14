@@ -14,7 +14,8 @@ const printStats = false;
 // To have this example create one of each, use [ "packed", "packed-self", "tpm", "fido-u2f", "none" ]
 // To support compound attestation format, use the string "compound." + then dot-separate each of the formats you wish to include in the compound format
 //     For example "compound.tpm.packed", "compound.packed-self.none". You can have 2 or more compounded formats.
-let attestationFormats = ["compound.tpm.packed" ]; 
+//let attestationFormats = ["packed" ]; 
+let attestationFormats = ["none" ]; 
 let authenticatorRecords = {};
 attestationFormats.forEach((attestationFormat) => {
     
@@ -22,7 +23,6 @@ attestationFormats.forEach((attestationFormat) => {
 
     fido2client.performAttestation(process.env.ISV_USERNAME, attestationFormat)
     .then((attestationResult) => {
-    
         // store this credential in our authenticatorRecords
         authenticatorRecords[attestationResult.credentialCreationResult.authenticatorRecord.credentialID] = attestationResult.credentialCreationResult.authenticatorRecord;
     
@@ -37,7 +37,9 @@ attestationFormats.forEach((attestationFormat) => {
     
         return Promise.all(allPromises);
     }).then((assertionResultResponses) => {
+        if (false) {
         logger.logWithTS("assertionResultResponses: " + JSON.stringify(assertionResultResponses));
+    }
         logger.logWithTS("==============================================================");
         logger.logWithTS("authenticatorRecords: " + JSON.stringify(authenticatorRecords));
         if (printStats) {

@@ -19,7 +19,8 @@
   "dependencies": {
     "cbor": "^9.0.2",
     "crypto-js": "^4.2.0",
-    "dotenv": "^16.4.5",
-    "jsrsasign": "^11.1.0"
+    "dotenv": "^16.5.0",
+    "jsrsasign": "^11.1.0",
+    "uuid": "^11.1.0"
   }
 }

@@ -397,6 +397,9 @@ function processCredentialCreationOptions(
 
 	// aaguid - 16 bytes, if we have one defined use it, otherwise all zeros
 	let lookupFormat = attestationFormat;
+	if (attestationFormat.startsWith("compound.")) {
+		lookupFormat = "compound";
+	}
 	let aaguid =
 		fidoutilsConfig[lookupFormat] == null ||
 			fidoutilsConfig[lookupFormat].aaguid == null

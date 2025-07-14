@@ -17,6 +17,9 @@ let ROOTCACERT="rootCA.pem"
 let ROOTCAKEY="rootCA.key"
 let ROOTCADN="/C=US/O=IBM/CN=FIDOTEST"
 
+let SUPPORT_COMPOUND_ATTESTATION=false
+let COMPOUND_ATTESTATION_AAGUID="compound.aaguid"
+
 let U2F_ATTESTATION_DN="/C=US/O=IBM/CN=U2F-SIGNER"
 let U2F_ATTESTATION_KEY="u2f.key"
 let U2F_ATTESTATION_CERT="u2f.pem"
@@ -74,6 +77,24 @@ function generateRandomSerialNumberHex() {
 //
 // The main code entry point is here
 //
+
+//
+// If we are supporting compound attestation, then we have one global AAGUID for all attestation formats and each has to use the same keypair
+//
+let compoundAttestationAAGUID = null;
+if (SUPPORT_COMPOUND_ATTESTATION) {
+    if (!fs.existsSync(COMPOUND_ATTESTATION_AAGUID)) {
+        compoundAttestationAAGUID = crypto.randomUUID().toLowerCase();
+        fs.writeFileSync(COMPOUND_ATTESTATION_AAGUID, compoundAttestationAAGUID);
+    } else {
+        compoundAttestationAAGUID = fs.readFileSync(COMPOUND_ATTESTATION_AAGUID).toString().replaceAll('\n','').toLowerCase();
+    }
+
+    // copy this AAGUID to all the other attestation format aaguids since they have to be identical for compound
+    fs.writeFileSync(PACKED_ATTESTATION_AAGUID, compoundAttestationAAGUID);
+    fs.writeFileSync(TPM_ATTESTATION_AAGUID, compoundAttestationAAGUID);
+    fs.writeFileSync(SELF_ATTESTATION_AAGUID, compoundAttestationAAGUID);
+}
 
 //
 // Generate AAGUIDs for packed, tpm and self attestation
@@ -425,7 +446,7 @@ if (!fs.existsSync(U2F_METADATA)) {
     u2fMetadataJSON = {
         description: "FIDOTEST-U2F",
         attestationCertificateKeyIdentifiers: [ u2fX509.getExtSubjectKeyIdentifier().kid.hex ],
-        protocolFamily: "fido2",
+        protocolFamily: "u2f",
         schema: 3,
         attestationTypes: [ "basic_full" ],
         attestationRootCertificates: [ rootCAText ],
@@ -532,4 +553,11 @@ let fido2ClientConfigJSON = {
         "aaguid": selfAttestationAAGUID
     }
 };
+// add compound if we're supporting it
+if (SUPPORT_COMPOUND_ATTESTATION) {
+    fido2ClientConfigJSON["compound"] = {
+        "aaguid": compoundAttestationAAGUID
+    }
+}
+
 console.log("FIDO2_CLIENT_CONFIG="+JSON.stringify(fido2ClientConfigJSON));
