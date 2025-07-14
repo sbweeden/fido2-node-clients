@@ -252,7 +252,7 @@ then
 
   echo "{\"description\":\"FIDOTEST-U2F\"," \
        "\"attestationCertificateKeyIdentifiers\": [ \"$SKI\" ]," \
-       "\"protocolFamily\":\"fido2\"," \
+       "\"protocolFamily\":\"u2f\"," \
        "\"schema\":3," \
        "\"attestationTypes\": [ \"basic_full\" ]," \
        "\"attestationRootCertificates\": [ \"$ROOTCA_TXT\" ]," \

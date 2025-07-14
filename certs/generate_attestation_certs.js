@@ -425,7 +425,7 @@ if (!fs.existsSync(U2F_METADATA)) {
     u2fMetadataJSON = {
         description: "FIDOTEST-U2F",
         attestationCertificateKeyIdentifiers: [ u2fX509.getExtSubjectKeyIdentifier().kid.hex ],
-        protocolFamily: "fido2",
+        protocolFamily: "u2f",
         schema: 3,
         attestationTypes: [ "basic_full" ],
         attestationRootCertificates: [ rootCAText ],
