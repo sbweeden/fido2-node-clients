@@ -3,6 +3,7 @@
 const cbor = require('cbor'); // https://www.npmjs.com/package/cbor
 const jsrsasign = require('jsrsasign'); // https://www.npmjs.com/package/jsrsasign
 const CryptoJS = require('crypto-js'); // https://www.npmjs.com/package/crypto-js
+const mykeyutil = require('./mykeyutil.js');
 
 // This environment variable needs to be set.
 let fidoutilsConfig = null;
@@ -58,7 +59,7 @@ function prepareBAForCBOR(ba) {
 
 //
 // CBOR encoding a COSE key is a bit tricky because not only are co-ordinate values
-// required to be byte strings, its also reauired that the key values are integers.
+// required to be byte strings, its also required that the key values are integers.
 // You can't express integer keys in a JSON object, so we first convert to a Map
 // with integer keys so that the CBOR encoder correctly encodes those keys as integers.
 //
@@ -148,31 +149,54 @@ function certToPEM(cert) {
 	return result;
 }
 
-function resolveCredentialIdBytesFromPrivateKeyHex(privKeyHEX) {
+function resolveCredentialIdBytesFromPrivateKeyHex(algId, privKeyHEX) {
 	if (fidoutilsConfig.encryptionPassphrase == null) {
 		throw new Error(
 			"Please set the fidoutilsConfig.encryptionPassphrase environment variable"
 		);
 	}
 
-	return jsrsasign.b64toBA(
+	let pObj = {
+		a: algId,
+		k: jsrsasign.hextob64u(privKeyHEX)
+	}
+	let plainText = JSON.stringify(pObj);
+
+	let result = jsrsasign.b64toBA(
 		CryptoJS.AES.encrypt(
-			privKeyHEX,
+			plainText,
 			fidoutilsConfig.encryptionPassphrase
 		).toString()
 	);
+
+	console.log("resolveCredentialIdBytesFromPrivateKeyHex credId length: " + result.length)
+
+	return result;
 }
 
-function resolvePrivateKeyHexFromCredentialIdBytes(credIdBytes) {
+function resolvePrivateKeyFromCredentialIdBytes(credIdBytes) {
+	let result = null;
 	if (fidoutilsConfig.encryptionPassphrase == null) {
 		throw new Error(
 			"Please set the fidoutilsConfig.encryptionPassphrase environment variable"
 		);
 	}
-	return CryptoJS.AES.decrypt(
+	let plainText = CryptoJS.AES.decrypt(
 		jsrsasign.hextob64(jsrsasign.BAtohex(credIdBytes)),
 		fidoutilsConfig.encryptionPassphrase
 	).toString(CryptoJS.enc.Utf8);
+
+	if (plainText != null && plainText.length > 0) {
+		let pObj = JSON.parse(plainText);
+		if (pObj != null) {
+			result = {
+				algId: pObj.a,
+				privateKeyHex: jsrsasign.b64utohex(pObj.k)
+			};
+		}
+	}
+
+	return result;
 }
 
 /**
@@ -287,25 +311,22 @@ function base64utobase64(base64Str) {
 }
 
 function canAuthenticateWithCredId(options) {
-	// try and use resolvePrivateKeyHexFromCredentialIdBytes and check the return 
+	// try and use resolvePrivateKeyFromCredentialIdBytes and check the return 
 	// if candiateprivkeyhex is not null and candiateprivkeyhex length greather than zero
 	// return true, else return false
-	console.log(options.publicKey.allowCredentials[0].id);
-	let privateKeyHexfromCandidateCredIdBytes;
+	let privateKeyFromCandidateCredIdBytes;
 	let canAuthenticate = false;
 	if (options.publicKey.allowCredentials !== null && options.publicKey.allowCredentials.length > 0) {
 		for (let i = 0; i < options.publicKey.allowCredentials.length; i++) {
 			let candidateCredId = options.publicKey.allowCredentials[i].id;
-			console.log("candidateCredId", candidateCredId);
-			privateKeyHexfromCandidateCredIdBytes = resolvePrivateKeyHexFromCredentialIdBytes(candidateCredId);
-			console.log("privateKeyHexfromCandidateCredIdBytes", privateKeyHexfromCandidateCredIdBytes);
-			if (privateKeyHexfromCandidateCredIdBytes !== null && privateKeyHexfromCandidateCredIdBytes.length > 0) {
+			privateKeyFromCandidateCredIdBytes = resolvePrivateKeFromCredentialIdBytes(candidateCredId);
+			if (privateKeyFromCandidateCredIdBytes !== null) {
 				canAuthenticate = true;
 				break;
 			}
 		}
 	}
-	console.log("canAuthenticate", canAuthenticate);
+	//console.log("canAuthenticate", canAuthenticate);
 	return canAuthenticate;
 }
 
@@ -323,7 +344,7 @@ function setFidoUtilsConfig(newObj) {
  * See example at: https://fidoalliance.org/specs/fido-v2.0-rd-20180702/fido-server-v2.0-rd-20180702.html#example-authenticator-attestation-response
  * Schema at: https://fidoalliance.org/specs/fido-v2.0-rd-20180702/fido-server-v2.0-rd-20180702.html#serverpublickeycredential
  */
-function processCredentialCreationOptions(
+async function processCredentialCreationOptions(
 	cco,
 	attestationFormat = "none",
 	up = true,
@@ -334,6 +355,7 @@ function processCredentialCreationOptions(
 		authenticatorRecord: {
 			rpId: cco.publicKey.rp.id,
 			privateKeyHex: null,
+			algId: null,
 			credentialID: null,
 			userHandle: null
 		},
@@ -414,18 +436,28 @@ function processCredentialCreationOptions(
 	// based on the attestationFormat, we use some different attestation keys
 
 	// we use the ECDSA key for the registered keypair - generate a new keypair now
-	let keypair = jsrsasign.KEYUTIL.generateKeypair("EC", "prime256v1");
+	let selectedAlg = null;
+	for (let i = 0; i < cco.publicKey.pubKeyCredParams.length && selectedAlg == null; i++) {
+		if (mykeyutil.supportsPubKeyCredParam(cco.publicKey.pubKeyCredParams[i].alg)) {
+			selectedAlg = cco.publicKey.pubKeyCredParams[i].alg;
+		}
+	}
+	if (selectedAlg == null) {
+		console.log("no algorithm supported");
+	}
+
+	let keypair = await mykeyutil.generateKeypair(selectedAlg);
 
 	//
 	// map the private key to a credential id - this is just one way to do it with key wrapping
 	// you could also locally store the private key and index with any credentialId handle you like
 	//
-	let credIdBytes = resolveCredentialIdBytesFromPrivateKeyHex(
-		keypair.prvKeyObj.prvKeyHex
-	);
+	let privateKeyHex = await mykeyutil.getPrivateKeyHex(keypair);	
+	let credIdBytes = resolveCredentialIdBytesFromPrivateKeyHex(selectedAlg, privateKeyHex);
 
 	// store the private/public  key, credentialID and userHandle
-	result.authenticatorRecord.privateKeyHex = keypair.prvKeyObj.prvKeyHex;
+	result.authenticatorRecord.privateKeyHex = privateKeyHex;
+	result.authenticatorRecord.algId = selectedAlg;
 	result.authenticatorRecord.credentialID = jsrsasign.hextob64u(
 		jsrsasign.BAtohex(credIdBytes)
 	);
@@ -434,17 +466,7 @@ function processCredentialCreationOptions(
 	);
 
 	// COSE format of the EC256 key
-	let credPublicKeyCOSE = {
-		"1": 2, // kty
-		"3": -7, // alg
-		"-1": 1, // crv
-		"-2": jsrsasign.b64toBA(
-			jsrsasign.hextob64(keypair.pubKeyObj.getPublicKeyXYHex()["x"])
-		), // xCoordinate
-		"-3": jsrsasign.b64toBA(
-			jsrsasign.hextob64(keypair.pubKeyObj.getPublicKeyXYHex()["y"])
-		) // yCoordinate
-	};
+	let credPublicKeyCOSE = await mykeyutil.getPublicKeyCOSE(keypair)
 
 	// credentialIdLength (2 bytes) and credential Id
 	let lenArray = [
@@ -492,14 +514,12 @@ function processCredentialCreationOptions(
 		// this is really packed, we only used packed-self internally to toggle the flag above
 		attestationFormat = "packed";
 	} else if (attestationFormat == "tpm") {
-		console.log("About to call buildTPMAttestationStatement");
 		attStmt = buildTPMAttestationStatement(
 			keypair,
 			clientDataHash,
 			authData,
 			credIdBytes
 		);
-		console.log("Done calling buildTPMAttestationStatement");
 	} else {
 		throw ("Unsupported attestationFormat: " + attestationFormat);
 	}
@@ -516,12 +536,15 @@ function processCredentialCreationOptions(
 
 	// if the JSON API elements are asked for, populate those
 	if (includeJSONResponseElements) {
-		saar.publicKeyAlgorithm = -7;
+		saar.publicKeyAlgorithm = selectedAlg;
 		// this is b64u of bytes from PEM encoding format
+		saar.publicKey = jsrsasign.b64tob64u(mykeyutil.getPublicKeyPEM(keypair).replace("-----BEGIN PUBLIC KEY-----","").replace("-----END PUBLIC KEY-----","").replaceAll("\n",""));
+		/*
 		saar.publicKey = jsrsasign.b64tob64u(
 			certToPEM(jsrsasign.b64toBA(jsrsasign.hextob64(keypair.pubKeyObj.pubKeyHex)))
 				.replace("-----BEGIN PUBLIC KEY-----","").replace("-----END PUBLIC KEY-----","").replaceAll("\n","")
 		);
+		*/
 		saar.authenticatorData = jsrsasign.hextob64u(jsrsasign.BAtohex(authData));
 	}
 
@@ -628,7 +651,7 @@ function assertionOptionsResponeToCredentialRequestOptions(o) {
  * cro is required.
  * The payloadHash is an extension that we added for an IoT demo, and outside that context can be passed as null.
  */
-function processCredentialRequestOptions(
+async function processCredentialRequestOptions(
 	cro,
 	authenticatorRecords,
 	up = true,
@@ -686,6 +709,7 @@ function processCredentialRequestOptions(
 
 	// use the credential id to resolve the private key
 	let privKeyHex = null;
+	let algId = null;
 	let usedCredentialId = null;
 	let userHandle = null;
 	let usernameLessFlow = false;
@@ -707,11 +731,12 @@ function processCredentialRequestOptions(
 				jsrsasign.BAtohex(candidateCredIdBytes)
 			);
 			try {
-				let candidatePrivKeyHex =
-					resolvePrivateKeyHexFromCredentialIdBytes(candidateCredIdBytes);
-				if (candidatePrivKeyHex != null && candidatePrivKeyHex.length > 0) {
+				let candidatePrivKey =
+					resolvePrivateKeyFromCredentialIdBytes(candidateCredIdBytes);
+				if (candidatePrivKey != null) {
+					algId = candidatePrivKey.algId;
 					usedCredentialId = candidateCredIdStr;
-					privKeyHex = candidatePrivKeyHex;
+					privKeyHex = candidatePrivKey.privateKeyHex;
 				}
 			} catch (e) {
 				// probably not our cred id
@@ -734,17 +759,18 @@ function processCredentialRequestOptions(
 			// can we use this one? - we will if the rpId matches where we are going
 			let candidateRecord = authenticatorRecords[allCredentialIDs[i]];
 			if (candidateRecord.rpId == cro.publicKey.rpId) {
+				algId = candidateRecord.algId;
 				usedCredentialId = candidateRecord.credentialID;
 				privKeyHex = candidateRecord.privateKeyHex;
 				userHandle = candidateRecord.userHandle;
 			}
 		}
 	}
-	if (privKeyHex != null) {
 
-		// credential information
-		let ecdsa = new jsrsasign.KJUR.crypto.ECDSA({ "curve": "prime256v1" });
-		ecdsa.setPrivateKeyHex(privKeyHex);
+	if (algId != null && privKeyHex != null) {
+
+		// re-create private key
+		let privateKey = await mykeyutil.getPrivateKeyFromHex(algId, privKeyHex);
 
 		// compute the signature
 		let cHash = sha256(
@@ -754,12 +780,8 @@ function processCredentialRequestOptions(
 		sigBase.push(...authData);
 		sigBase.push(...cHash);
 
-		let sig = new jsrsasign.KJUR.crypto.Signature({ "alg": "SHA256withRSA" });
-		sig.init(ecdsa);
-		sig.updateHex(jsrsasign.BAtohex(sigBase));
-		let sigValueHex = sig.sign();
-
-		saar.signature = jsrsasign.hextob64u(sigValueHex);
+		let sigB64U = await mykeyutil.signBytesWithPrivateKey(algId, privateKey, sigBase);
+		saar.signature = sigB64U;
 
 		// add the user handle for username-less flows
 		if (usernameLessFlow) {
@@ -1056,7 +1078,7 @@ function buildTPMAttestationStatement(
 	let certInfoBytes = bytesFromArray(new Uint8Array(ciBuffer), 0, nextIndex);
 	attStmt.certInfo = prepareBAForCBOR(certInfoBytes);
 
-	console.log("certInfoBytes(hex) : " + jsrsasign.BAtohex(certInfoBytes));
+	//console.log("certInfoBytes(hex) : " + jsrsasign.BAtohex(certInfoBytes));
 
 	// generate and populate signature (the sigBase is signed with the attestation cert)
 	let sig = new jsrsasign.KJUR.crypto.Signature({ "alg": "SHA256withRSA" });

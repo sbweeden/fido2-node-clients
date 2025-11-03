@@ -25,7 +25,12 @@ function performAttestation(username, attestationFormat) {
         "attestation": "direct",
         "attachment": "all",
         "algorithms": [
-            "es256"
+            "ed25519",
+            "es256",
+            "rs256",
+            "mldsa44",
+            "mldsa65",
+            "mldsa87"
         ],
         "discoverable_credential": "preferred",
         "hints": []
@@ -55,8 +60,8 @@ function performAttestation(username, attestationFormat) {
         //logger.logWithTS("performAttestation: attestationOptionsResponse: " + JSON.stringify(attestationOptionsResponse));        
         let cco = fidoutils.attestationOptionsResponeToCredentialCreationOptions(attestationOptionsResponse);
         //logger.logWithTS("performAttestation: CredentialCreationOptions: " + JSON.stringify(cco));
-        let credentialCreationResult = fidoutils.processCredentialCreationOptions(cco, attestationFormat, true, true, true);
-
+        return fidoutils.processCredentialCreationOptions(cco, attestationFormat, true, true, true);
+    }).then((credentialCreationResult) => {
         // format payload required by webauthn.io verification endpoint
         let webauthnioAttestationResponsePayload = {
             username: username,
@@ -150,8 +155,8 @@ function performAssertion(username, authenticatorRecords) {
         }
         logger.logWithTS("performAssertion: assertionOptionsResponse: " + JSON.stringify(assertionOptionsResponse));
         let cro = fidoutils.assertionOptionsResponeToCredentialRequestOptions(assertionOptionsResponse);
-        let spkc = fidoutils.processCredentialRequestOptions(cro, authenticatorRecords);
-
+        return fidoutils.processCredentialRequestOptions(cro, authenticatorRecords);
+    }).then((spkc) => {
         // format payload required by webauthn.io verification endpoint
         let webauthnioAssertionResponsePayload = {
             username: bodyToSend.username,

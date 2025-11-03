@@ -110,6 +110,8 @@ function performAttestation(username, attestationFormat) {
         attestationResultResponse: null
     }
 
+    let challenge = null;
+
 	return tm.getAccessToken()
 	.then((at) => {
 		access_token = at;
@@ -129,13 +131,14 @@ function performAttestation(username, attestationFormat) {
 			}
 		);
 	}).then((attestationOptionsResponse) => {
+        challenge = attestationOptionsResponse.challenge;
         logger.logWithTS("performAttestation: attestationOptionsResponse: " + JSON.stringify(attestationOptionsResponse));        
         let cco = fidoutils.attestationOptionsResponeToCredentialCreationOptions(attestationOptionsResponse);
         //logger.logWithTS("performAttestation: CredentialCreationOptions: " + JSON.stringify(cco));
-        let credentialCreationResult = fidoutils.processCredentialCreationOptions(cco, attestationFormat);
-
+        return fidoutils.processCredentialCreationOptions(cco, attestationFormat);
+	}).then((credentialCreationResult) => {
         // add stuff required (and optional) for ISVA
-        credentialCreationResult.spkc["nickname"] = "NodeClient - " + attestationOptionsResponse.challenge;
+        credentialCreationResult.spkc["nickname"] = "NodeClient - " + challenge;
         credentialCreationResult.spkc["getTransports"] = ["node"];
         //logger.logWithTS("Standard JSON format SPKC: " + JSON.stringify(isvaSPKCToStandardPublicKeyCredentialJSON(credentialCreationResult.spkc)));
 		logger.logWithTS("performAttestation sending attestation result to ISVA: " + JSON.stringify(credentialCreationResult.spkc));
@@ -214,7 +217,8 @@ function performAssertion(username, authenticatorRecords) {
         }
         logger.logWithTS("performAssertion: assertionOptionsResponse: " + JSON.stringify(assertionOptionsResponse));        
         let cro = fidoutils.assertionOptionsResponeToCredentialRequestOptions(assertionOptionsResponse);
-        let spkc = fidoutils.processCredentialRequestOptions(cro, authenticatorRecords);
+        return fidoutils.processCredentialRequestOptions(cro, authenticatorRecords);
+    }).then((spkc) => {
         logger.logWithTS("performAssertion sending assertion result to ISVA: " + JSON.stringify(spkc));        
 
         return commonServices.timedFetch(
