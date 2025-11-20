@@ -5,6 +5,10 @@ const jsrsasign = require('jsrsasign'); // https://www.npmjs.com/package/jsrsasi
 const CryptoJS = require('crypto-js'); // https://www.npmjs.com/package/crypto-js
 const mykeyutil = require('./mykeyutil.js');
 
+// if true this hashes the private key bytes to produce a credential ID (non-reversable)
+// if false this encrypts the private key bytes to produce a credential ID (reversable), however produces results for RSA keys that are very long
+let USE_HASHED_CREDENTIAL_ID=true
+
 // This environment variable needs to be set.
 let fidoutilsConfig = null;
 if (process.env.FIDO2_CLIENT_CONFIG != null) {
@@ -452,8 +456,13 @@ async function processCredentialCreationOptions(
 	// map the private key to a credential id - this is just one way to do it with key wrapping
 	// you could also locally store the private key and index with any credentialId handle you like
 	//
-	let privateKeyHex = await mykeyutil.getPrivateKeyHex(keypair);	
-	let credIdBytes = resolveCredentialIdBytesFromPrivateKeyHex(selectedAlg, privateKeyHex);
+	let privateKeyHex = await mykeyutil.getPrivateKeyHex(keypair);
+	let credIdBytes = null;
+	if (USE_HASHED_CREDENTIAL_ID) {
+		credIdBytes = sha256(jsrsasign.b64toBA(jsrsasign.hextob64(privateKeyHex)));
+	} else {
+		credIdBytes = resolveCredentialIdBytesFromPrivateKeyHex(selectedAlg, privateKeyHex);
+	}
 
 	// store the private/public  key, credentialID and userHandle
 	result.authenticatorRecord.privateKeyHex = privateKeyHex;
@@ -466,7 +475,7 @@ async function processCredentialCreationOptions(
 	);
 
 	// COSE format of the EC256 key
-	let credPublicKeyCOSE = await mykeyutil.getPublicKeyCOSE(keypair)
+	let credPublicKeyCOSE = await mykeyutil.getPublicKeyCOSE(selectedAlg, keypair);
 
 	// credentialIdLength (2 bytes) and credential Id
 	let lenArray = [
@@ -538,13 +547,8 @@ async function processCredentialCreationOptions(
 	if (includeJSONResponseElements) {
 		saar.publicKeyAlgorithm = selectedAlg;
 		// this is b64u of bytes from PEM encoding format
-		saar.publicKey = jsrsasign.b64tob64u(mykeyutil.getPublicKeyPEM(keypair).replace("-----BEGIN PUBLIC KEY-----","").replace("-----END PUBLIC KEY-----","").replaceAll("\n",""));
-		/*
-		saar.publicKey = jsrsasign.b64tob64u(
-			certToPEM(jsrsasign.b64toBA(jsrsasign.hextob64(keypair.pubKeyObj.pubKeyHex)))
-				.replace("-----BEGIN PUBLIC KEY-----","").replace("-----END PUBLIC KEY-----","").replaceAll("\n","")
-		);
-		*/
+		let publicKeyPEM = await mykeyutil.getPublicKeyPEM(keypair);
+		saar.publicKey = jsrsasign.b64tob64u(publicKeyPEM.replace("-----BEGIN PUBLIC KEY-----","").replace("-----END PUBLIC KEY-----","").replaceAll("\n",""));
 		saar.authenticatorData = jsrsasign.hextob64u(jsrsasign.BAtohex(authData));
 	}
 
@@ -722,26 +726,47 @@ async function processCredentialRequestOptions(
 			i < cro.publicKey["allowCredentials"].length && privKeyHex == null;
 			i++
 		) {
-			let candidateCredIdBytes = bytesFromArray(
-				cro.publicKey["allowCredentials"][i].id,
-				0,
-				-1
-			);
-			let candidateCredIdStr = jsrsasign.hextob64u(
-				jsrsasign.BAtohex(candidateCredIdBytes)
-			);
-			try {
-				let candidatePrivKey =
-					resolvePrivateKeyFromCredentialIdBytes(candidateCredIdBytes);
-				if (candidatePrivKey != null) {
-					algId = candidatePrivKey.algId;
-					usedCredentialId = candidateCredIdStr;
-					privKeyHex = candidatePrivKey.privateKeyHex;
+			//
+			// if authenticatorRecords is supplied, see if this entry of allowCredentials
+			// is in the authenticatorRecords and just use it if its there
+			//
+			if (authenticatorRecords != null) {
+				// authenticatorRecords is an object with keys that are b64u of the credId bytes
+				let lookupCredId = jsrsasign.hextob64u(jsrsasign.BAtohex(
+					bytesFromArray(cro.publicKey["allowCredentials"][i].id, 0, -1)));
+				if (authenticatorRecords[lookupCredId] != null) {
+					algId = authenticatorRecords[lookupCredId].algId;
+					usedCredentialId = authenticatorRecords[lookupCredId].credentialID;
+					privKeyHex = authenticatorRecords[lookupCredId].privateKeyHex;
 				}
-			} catch (e) {
-				// probably not our cred id
-				//console.log("Unable to decrypt: " + candidateCredIdStr + " e: " + e);
-				//console.log("Ignoring allowCredentials cred id as we could not decrypt it: " + candidateCredIdStr);
+			}
+
+			//
+			// if we did not locate this credentialID in authenticatorRecords,
+			// see if we can decrypt it (since it might be a wrapped key)
+			//
+			if (privKeyHex == null) {
+				let candidateCredIdBytes = bytesFromArray(
+					cro.publicKey["allowCredentials"][i].id,
+					0,
+					-1
+				);
+				let candidateCredIdStr = jsrsasign.hextob64u(
+					jsrsasign.BAtohex(candidateCredIdBytes)
+				);
+				try {
+					let candidatePrivKey =
+						resolvePrivateKeyFromCredentialIdBytes(candidateCredIdBytes);
+					if (candidatePrivKey != null) {
+						algId = candidatePrivKey.algId;
+						usedCredentialId = candidateCredIdStr;
+						privKeyHex = candidatePrivKey.privateKeyHex;
+					}
+				} catch (e) {
+					// probably not our cred id
+					//console.log("Unable to decrypt: " + candidateCredIdStr + " e: " + e);
+					//console.log("Ignoring allowCredentials cred id as we could not decrypt it: " + candidateCredIdStr);
+				}
 			}
 		}
 	} else {
@@ -780,7 +805,9 @@ async function processCredentialRequestOptions(
 		sigBase.push(...authData);
 		sigBase.push(...cHash);
 
-		let sigB64U = await mykeyutil.signBytesWithPrivateKey(algId, privateKey, sigBase);
+		let sigBytes = await mykeyutil.signBytesWithPrivateKey(algId, privateKey, sigBase); 
+
+		let sigB64U = jsrsasign.hextob64u(jsrsasign.BAtohex(sigBytes));
 		saar.signature = sigB64U;
 
 		// add the user handle for username-less flows
@@ -1447,7 +1474,12 @@ function unpackAuthData(authDataBytes) {
 	return result;
 }
 
+function init() {
+	return mykeyutil.init();
+}
+
 module.exports = {
+	init: init,
 	attestationOptionsResponeToCredentialCreationOptions: attestationOptionsResponeToCredentialCreationOptions,
 	processCredentialCreationOptions: processCredentialCreationOptions,
 	assertionOptionsResponeToCredentialRequestOptions: assertionOptionsResponeToCredentialRequestOptions,

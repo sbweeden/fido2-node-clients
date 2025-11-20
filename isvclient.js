@@ -374,8 +374,12 @@ function performAssertion(userId, authenticatorRecords) {
     });
 }
 
+function init() {
+    return fidoutils.init();
+}
 
 module.exports = { 
+    init: init,
 	performAttestation: performAttestation,
 	performAssertion: performAssertion
 };

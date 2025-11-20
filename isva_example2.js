@@ -14,9 +14,10 @@ let authenticatorRecords = {"YOUR_CREDENTIAL_ID":{"rpId":"mytenant.verify.ibmclo
 //
 // MAIN entry point starts here
 //
-
-fido2client.performAssertion(null, authenticatorRecords)
-.then((assertionResult) => {
+fido2client.init()
+.then(() => {
+    return fido2client.performAssertion(null, authenticatorRecords);
+}).then((assertionResult) => {
     logger.logWithTS("assertionResultResponse: " + JSON.stringify(assertionResult));
 }).catch((e) => {
     let fido2Error = commonServices.normaliseError("main_flow", e, "Unable to complete operations");
