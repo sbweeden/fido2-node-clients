@@ -12,16 +12,11 @@ const commonServices = require('./commonservices.js');
 //   https://docs.verify.ibm.com/verify/docs/first-factor-authentication-fido2-login
 //
 
-
 //
-// UPDATE this with a value previously captured from an attestation flow (such as in isv_example1.js)
-//
-//let authenticatorRecords = {"YOUR_CREDENTIAL_ID":{"rpId":"mytenant.verify.ibmcloudsecurity.com","privateKeyHex":"YOUR_PRIVATE_KEY","credentialID":"YOUR_CREDENTIAL_ID","userHandle":"YOUR_USER_HANDLE"}};
-
-
-//
+// This example requires configuration in ISV of an OIDC application used for policyauth. It is configured in .env via
+// POLICYAUTH_CLIENT_ID and optionally POLICYAUTH_CLIENT_SECRET (if the poilcyauth client is a confidential client)
 // 
-// the POLICYAUTH application client is an OIDC application that is configured in ISV with these grant types enabled: 
+// The policyauth client is an OIDC application that is configured in ISV with these grant types enabled: 
 //   JWT bearer
 //   Context-based authorization
 // 
@@ -29,6 +24,17 @@ const commonServices = require('./commonservices.js');
 // and uses a custom access policy (of type "Native custom app") that has one first contact rule:
 //     Authentication action = Challenge
 //     Specific methods: FIDO2 (only in my case)
+// The policy SSO default rule is just "Allow" in the access policy
+//
+
+
+//
+// UPDATE this with a value previously captured from an attestation flow (such as in isv_example1.js)
+//
+//let authenticatorRecords = {"YOUR_CREDENTIAL_ID":{"rpId":"mytenant.verify.ibmcloudsecurity.com","privateKeyHex":"YOUR_PRIVATE_KEY","credentialID":"YOUR_CREDENTIAL_ID","userHandle":"YOUR_USER_HANDLE"}};
+
+
+
 const TOKEN_ENDPOINT =  process.env.ISV_TENANT_ENDPOINT + "/oauth2/token";
 const SESSION_ENDPOINT =  process.env.ISV_TENANT_ENDPOINT + "/v1.0/auth/session";
 
