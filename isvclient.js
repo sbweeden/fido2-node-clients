@@ -308,9 +308,14 @@ function performAttestation(username, attestationFormat) {
  * login. The authenticatorRecords is a map of credentialID to "record". This parameter should come from the results 
  * of a previous performAttestation call.
  * 
+ * policyAuthAccessToken is optional, and if provided then will be used in the calls to /assertion/options and /assertion/result
+ * if not provided, the administrative access token obtained with the client defined in .env will be used
+ * 
+ * returnJwt is optional, and if true then returnJwt=true will be passed to the assertion/result endpoint as a query parameter.
+ * 
  * Take a look at isv_example1.js for a demonstration of how to use this in combination with performAttestation.
  */
-function performAssertion(userId, authenticatorRecords) {
+function performAssertion(userId, authenticatorRecords, policyAuthAccessToken, returnJwt) {
     let access_token = null;
     let rpUuid = null;
     let bodyToSend = {
@@ -336,7 +341,7 @@ function performAssertion(userId, authenticatorRecords) {
                 headers: {
                 "Content-type": "application/json",
                 "Accept": "application/json",
-                "Authorization": "Bearer " + access_token
+                "Authorization": "Bearer " + (policyAuthAccessToken != null ? policyAuthAccessToken : access_token)
                 },
                 body: JSON.stringify(bodyToSend),
                 returnAsJSON: true
@@ -352,14 +357,17 @@ function performAssertion(userId, authenticatorRecords) {
         return fidoutils.processCredentialRequestOptions(cro, authenticatorRecords);
     }).then((spkc) => {
         logger.logWithTS("performAssertion sending assertion result to ISV: " + JSON.stringify(spkc));
+
+        let url = process.env.ISV_TENANT_ENDPOINT + "/v2.0/factors/fido2/relyingparties/" + rpUuid + "/assertion/result" + ((returnJwt != null && returnJwt) ? "?returnJwt=true" : "");
+
         return commonServices.timedFetch(
-            process.env.ISV_TENANT_ENDPOINT + "/v2.0/factors/fido2/relyingparties/" + rpUuid + "/assertion/result",
+            url,
             {
                 method: "POST",
                 headers: {
                     "Content-type": "application/json",
                     "Accept": "application/json",
-                    "Authorization": "Bearer " + access_token
+                    "Authorization": "Bearer " + (policyAuthAccessToken != null ? policyAuthAccessToken : access_token)
                 },
                 body: JSON.stringify(spkc),
                 returnAsJSON: true
