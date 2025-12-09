@@ -4,14 +4,11 @@ const jsrsasign = require('jsrsasign'); // https://www.npmjs.com/package/jsrsasi
 const { v4: uuidv4 } = require('uuid');
 
 let prvKeyPEM = "-----BEGIN PRIVATE KEY-----" + "\n" +
-"MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgM7eeoE+9OAKTbFL4" + "\n" +
-"e7tgsCifLbnUG0P0KIc4MHpOyLmhRANCAASIUhRPm9aegaxzb4MG5YlcKDHBS1XI" + "\n" +
-"ESXx2Ig+e+R/E1it1tijc/UABdkWPnyReVBnKNeRMBHzLojwLEvl1mbk" + "\n" +
+"BLAH-TEST-PRIVATE-KEY" + "\n" +
 "-----END PRIVATE KEY-----";
 
 let pubKeyPEM = "-----BEGIN PUBLIC KEY-----" + "\n" +
-"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEiFIUT5vWnoGsc2+DBuWJXCgxwUtV" + "\n" +
-"yBEl8diIPnvkfxNYrdbYo3P1AAXZFj58kXlQZyjXkTAR8y6I8CxL5dZm5A==" + "\n" +
+"BLAH-TEST-PUBLIC-KEY" + "\n" +
 "-----END PUBLIC KEY-----";
 
 let pubKey = jsrsasign.KEYUTIL.getKey(pubKeyPEM);
@@ -38,10 +35,10 @@ console.log("JWK: " + JSON.stringify(jwkObj));
 }  
 */
 
-const CLIENT_ID="67484627-8fb0-47a6-aecb-f229587370b2";
-const CLIENT_SECRET="7vIim09ukM";
-const TENANT="myidp.ite4.idng.ibmcloudsecurity.com";
-let userId = "813003NNJ7"; // the uid for emily - a user in my tenant
+const CLIENT_ID="XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX";
+const CLIENT_SECRET="XXXXXXXXXX";
+const TENANT="XXXX.verify.ibm.com";
+let userId = "XXXXXX"; // the uid for a user in the tenant
 let lifetimeSec=120;
 let skewSec=10; 
 
@@ -76,8 +73,6 @@ let formData = {
     assertion: assertion
 }
 let myBody = new URLSearchParams(formData);
-
-//console.log('curl -i -d "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&client_id=67484627-8fb0-47a6-aecb-f229587370b2&client_secret=7vIim09ukM&assertion=' + assertion + '" "https://' + TENANT + '/oauth2/token"');
 
 fetch(
    tokenEndpoint,
