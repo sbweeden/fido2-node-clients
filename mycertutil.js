@@ -2,6 +2,9 @@
 
 // inspiration from https://blog.engelke.com/2014/10/21/web-crypto-and-x-509-certificates/
 
+const nodeCrypto = require('node:crypto');
+const { MerkleTree } = require('merkletreejs'); // https://www.npmjs.com/package/merkletreejs
+
 /**
  * Extracts the bytes from an array beginning at index start, and continuing until
  * index end-1 or the end of the array is reached. Pass -1 for end if you want to
@@ -598,9 +601,273 @@ function parsePublicKeyBytes(byteArray) {
     return result;
 }
 
+/*
+ * ===========================================================================
+ * Merkle Tree Certificate (MTC) primitives - WebAuthn Level 4 fmt "mtc"
+ * (see MTC_IMPLEMENTATION_PLAN.md, sections 3.1 and 3.2)
+ * ===========================================================================
+ */
+
+// 9999-12-31T23:59:59Z - the "never expires" notAfter sentinel
+const MTC_NOT_AFTER_NEVER = 253402300799n;
+
+// ASCII "FIDO-MTC-SUBTREE-CHECKPOINT-V1" followed by two 0x00 bytes (32 bytes)
+const MTC_CHECKPOINT_DOMAIN_SEPARATOR = Buffer.concat([
+    Buffer.from("FIDO-MTC-SUBTREE-CHECKPOINT-V1", "ascii"),
+    Buffer.alloc(2)
+]);
+
+function sha256(buf) {
+    return nodeCrypto.createHash('sha256').update(buf).digest();
+}
+
+/**
+ * Converts a Buffer, Uint8Array, ArrayBuffer, or array of byte values to a Buffer.
+ * Throws a TypeError for anything else.
+ */
+function toBuffer(value, name) {
+    if (Buffer.isBuffer(value)) {
+        return value;
+    } else if (value instanceof Uint8Array) {
+        return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+    } else if (value instanceof ArrayBuffer) {
+        return Buffer.from(value);
+    } else if (Array.isArray(value) && value.every((b) => Number.isInteger(b) && b >= 0 && b <= 255)) {
+        return Buffer.from(value);
+    }
+    throw new TypeError(name + " must be a Buffer, Uint8Array, ArrayBuffer or array of bytes");
+}
+
+/**
+ * Converts a non-negative integer (number or bigint) to a big-endian Buffer of exactly size bytes.
+ */
+function uintToBE(value, size, name) {
+    if (typeof value === "number") {
+        if (!Number.isSafeInteger(value)) {
+            throw new RangeError(name + " must be a safe integer (use a bigint for larger values)");
+        }
+        value = BigInt(value);
+    } else if (typeof value !== "bigint") {
+        throw new TypeError(name + " must be a number or bigint");
+    }
+    if (value < 0n || value >= (1n << BigInt(size * 8))) {
+        throw new RangeError(name + " is out of range for uint" + (size * 8));
+    }
+    const result = Buffer.alloc(size);
+    for (let i = size - 1; i >= 0; i--) {
+        result[i] = Number(value & 0xffn);
+        value >>= 8n;
+    }
+    return result;
+}
+
+function checkedCaId(caId) {
+    const caIdBuf = toBuffer(caId, "caId");
+    if (caIdBuf.length > 0xffff) {
+        throw new RangeError("caId is too long");
+    }
+    return caIdBuf;
+}
+
+/**
+ * Builds the FidoMtcSubtreeCheckpoint binary preimage (80 + len(caId) bytes) which is signed by the vendor root CA:
+ *   "FIDO-MTC-SUBTREE-CHECKPOINT-V1\0\0" (32) || uint16(len(caId)) || caId || uint16(logNumber)
+ *   || uint48(start) || uint48(end) || rootHash (32)
+ *
+ * @returns {Buffer}
+ */
+function buildFidoMtcSubtreeCheckpoint({ caId, logNumber, start, end, rootHash }) {
+    const caIdBuf = checkedCaId(caId);
+    const rootHashBuf = toBuffer(rootHash, "rootHash");
+    if (rootHashBuf.length !== 32) {
+        throw new RangeError("rootHash must be 32 bytes");
+    }
+    const startBuf = uintToBE(start, 6, "start");
+    const endBuf = uintToBE(end, 6, "end");
+    if (BigInt("0x" + endBuf.toString("hex")) <= BigInt("0x" + startBuf.toString("hex"))) {
+        throw new RangeError("end must be greater than start");
+    }
+    return Buffer.concat([
+        MTC_CHECKPOINT_DOMAIN_SEPARATOR,
+        uintToBE(caIdBuf.length, 2, "caId length"),
+        caIdBuf,
+        uintToBE(logNumber, 2, "logNumber"),
+        startBuf,
+        endBuf,
+        rootHashBuf
+    ]);
+}
+
+/**
+ * Builds the FidoMtcLogEntry binary preimage which is hashed to form a Merkle leaf:
+ *   uint16(len(caId)) || caId || uint64(serial) || uint64(notBefore) || uint64(notAfter) || aaguid (16)
+ *   || fwBytes (0x00, or 0x01 || uint64(firmwareVersion)) || SHA-256(coseKeyBytes) (32)
+ *   || uint16(len(extensions)) || extensions
+ *
+ * notAfter defaults to 253402300799 (9999-12-31T23:59:59Z), and extensions defaults to empty.
+ * coseKeyBytes must be the canonical CBOR encoding of the COSE_Key.
+ *
+ * Note that the field sizes sum to 76 + len(caId) + len(fwBytes) + len(extensions) bytes.
+ *
+ * @returns {Buffer}
+ */
+function buildFidoMtcLogEntry({ caId, serial, notBefore, notAfter, aaguid, firmwareVersion, coseKeyBytes, extensions }) {
+    const caIdBuf = checkedCaId(caId);
+    const aaguidBuf = toBuffer(aaguid, "aaguid");
+    if (aaguidBuf.length !== 16) {
+        throw new RangeError("aaguid must be 16 bytes");
+    }
+    const coseKeyBuf = toBuffer(coseKeyBytes, "coseKeyBytes");
+    if (coseKeyBuf.length === 0) {
+        throw new RangeError("coseKeyBytes must not be empty");
+    }
+    const extBuf = (extensions == null) ? Buffer.alloc(0) : toBuffer(extensions, "extensions");
+    if (extBuf.length > 0xffff) {
+        throw new RangeError("extensions is too long");
+    }
+    const fwBuf = (firmwareVersion == null)
+        ? Buffer.from([0x00])
+        : Buffer.concat([Buffer.from([0x01]), uintToBE(firmwareVersion, 8, "firmwareVersion")]);
+
+    return Buffer.concat([
+        uintToBE(caIdBuf.length, 2, "caId length"),
+        caIdBuf,
+        uintToBE(serial, 8, "serial"),
+        uintToBE(notBefore, 8, "notBefore"),
+        uintToBE(notAfter == null ? MTC_NOT_AFTER_NEVER : notAfter, 8, "notAfter"),
+        aaguidBuf,
+        fwBuf,
+        sha256(coseKeyBuf),
+        uintToBE(extBuf.length, 2, "extensions length"),
+        extBuf
+    ]);
+}
+
+/**
+ * Computes the RFC 9162 §2.1.1 leaf hash: SHA-256(0x00 || logEntryBytes)
+ *
+ * @returns {Buffer} 32 byte leaf hash
+ */
+function computeFidoMtcLeafHash(logEntryBytes) {
+    return sha256(Buffer.concat([Buffer.from([0x00]), toBuffer(logEntryBytes, "logEntryBytes")]));
+}
+
+/**
+ * Computes the RFC 9162 §2.1.1 interior node hash: SHA-256(0x01 || left || right)
+ */
+function hashRFC9162Node(left, right) {
+    return sha256(Buffer.concat([Buffer.from([0x01]), left, right]));
+}
+
+/**
+ * Builds an RFC 9162 SHA-256 Merkle tree over already-computed leaf hashes (see computeFidoMtcLeafHash),
+ * using the merkletreejs library. Interior nodes are SHA-256(0x01 || left || right). Trees whose size is not a
+ * power of two have the RFC 9162 shape (the left subtree is the largest power of two smaller than n).
+ *
+ * @param leafHashes - array of 32 byte leaf hashes (at least one)
+ * @returns {{ rootHash: Buffer, leafCount: number, getProof: function(number): Buffer[] }}
+ *   getProof(leafIndex) returns the RFC 9162 inclusion proof (array of 32 byte sibling hashes, leaf to root)
+ *   for the leaf at the (zero-based, subtree relative) leafIndex.
+ */
+function buildRFC9162MerkleTree(leafHashes) {
+    if (!Array.isArray(leafHashes) || leafHashes.length === 0) {
+        throw new TypeError("leafHashes must be a non-empty array");
+    }
+    const leaves = leafHashes.map((h, i) => {
+        const buf = toBuffer(h, "leafHashes[" + i + "]");
+        if (buf.length !== 32) {
+            throw new RangeError("leafHashes[" + i + "] must be 32 bytes");
+        }
+        return buf;
+    });
+
+    const tree = new MerkleTree(
+        leaves,
+        sha256,
+        // leaves are already hashed; interior nodes get the 0x01 domain separation prefix
+        { concatenator: (nodes) => Buffer.concat([Buffer.from([0x01]), ...nodes]) }
+    );
+
+    return {
+        rootHash: tree.getRoot(),
+        leafCount: leaves.length,
+        getProof: function(leafIndex) {
+            if (!Number.isInteger(leafIndex) || leafIndex < 0 || leafIndex >= leaves.length) {
+                throw new RangeError("leafIndex is out of range");
+            }
+            return tree.getProof(leaves[leafIndex], leafIndex).map((p) => p.data);
+        }
+    };
+}
+
+/**
+ * Verifies an RFC 9162 §2.1.3.2 Merkle inclusion proof for a leaf within the subtree [start, end).
+ * The proof is relative to the subtree, so the relative index is leafIndex - start and the tree size is end - start.
+ * This is the RFC algorithm (rather than a simple parity climb) so that it is also correct for trees whose size
+ * is not a power of two.
+ *
+ * @param leafHash - 32 byte leaf hash
+ * @param proof - array of 32 byte sibling hashes, ordered from the leaf upwards
+ * @param leafIndex - absolute leaf index (serial & 0xFFFFFFFFFFFF)
+ * @param start - inclusive start index of the subtree (defaults to 0)
+ * @param end - exclusive end index of the subtree
+ * @param rootHash - expected 32 byte subtree root hash
+ * @returns {boolean} true only if the proof is well formed and climbs to rootHash
+ */
+function verifyRFC9162MerkleProof({ leafHash, proof, leafIndex, start, end, rootHash }) {
+    try {
+        const leafHashBuf = toBuffer(leafHash, "leafHash");
+        const rootHashBuf = toBuffer(rootHash, "rootHash");
+        if (leafHashBuf.length !== 32 || rootHashBuf.length !== 32 || !Array.isArray(proof)) {
+            return false;
+        }
+        const siblings = proof.map((p) => toBuffer(p, "proof element"));
+        if (siblings.some((p) => p.length !== 32)) {
+            return false;
+        }
+
+        const idx = BigInt(leafIndex);
+        const startIdx = BigInt(start == null ? 0 : start);
+        const endIdx = BigInt(end);
+        if (startIdx < 0n || idx < startIdx || idx >= endIdx) {
+            return false;
+        }
+
+        let fn = idx - startIdx;
+        let sn = endIdx - startIdx - 1n;
+        let r = leafHashBuf;
+        for (const p of siblings) {
+            if (sn === 0n) {
+                return false;
+            }
+            if ((fn & 1n) === 1n || fn === sn) {
+                r = hashRFC9162Node(p, r);
+                if ((fn & 1n) === 0n) {
+                    while ((fn & 1n) === 0n && fn !== 0n) {
+                        fn >>= 1n;
+                        sn >>= 1n;
+                    }
+                }
+            } else {
+                r = hashRFC9162Node(r, p);
+            }
+            fn >>= 1n;
+            sn >>= 1n;
+        }
+        return sn === 0n && nodeCrypto.timingSafeEqual(r, rootHashBuf);
+    } catch (e) {
+        return false;
+    }
+}
+
 module.exports = {
     berToJavaScript: berToJavaScript,
     berListToJavaScript: berListToJavaScript,
     parseCertificate: parseCertificate,
-    parsePublicKeyBytes: parsePublicKeyBytes
+    parsePublicKeyBytes: parsePublicKeyBytes,
+    buildFidoMtcSubtreeCheckpoint: buildFidoMtcSubtreeCheckpoint,
+    buildFidoMtcLogEntry: buildFidoMtcLogEntry,
+    computeFidoMtcLeafHash: computeFidoMtcLeafHash,
+    buildRFC9162MerkleTree: buildRFC9162MerkleTree,
+    verifyRFC9162MerkleProof: verifyRFC9162MerkleProof
 };

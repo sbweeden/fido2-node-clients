@@ -23,6 +23,55 @@ function hextob64(data) {
     return jsrsasign.hextob64(data);
 }
 
+/*
+ * Native (non-jsrsasign) encoding utilities, implemented with Buffer.
+ * Binary inputs may be a Buffer, Uint8Array, ArrayBuffer or an array of byte values.
+ * Binary outputs are returned as Buffers.
+ */
+function toNativeBuffer(data) {
+    if (Buffer.isBuffer(data)) {
+        return data;
+    } else if (data instanceof Uint8Array) {
+        return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+    } else if (data instanceof ArrayBuffer || Array.isArray(data)) {
+        return Buffer.from(data);
+    }
+    throw new TypeError("Expected a Buffer, Uint8Array, ArrayBuffer or array of bytes");
+}
+
+function toHex(data) {
+    return toNativeBuffer(data).toString('hex');
+}
+
+function fromHex(hex) {
+    if (typeof hex !== 'string' || hex.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(hex)) {
+        throw new TypeError("Invalid hex string");
+    }
+    return Buffer.from(hex, 'hex');
+}
+
+function toBase64Url(data) {
+    return toNativeBuffer(data).toString('base64url');
+}
+
+function fromBase64Url(str) {
+    if (typeof str !== 'string' || !/^[A-Za-z0-9_-]*$/.test(str)) {
+        throw new TypeError("Invalid base64url string");
+    }
+    return Buffer.from(str, 'base64url');
+}
+
+function toBase64(data) {
+    return toNativeBuffer(data).toString('base64');
+}
+
+function fromBase64(str) {
+    if (typeof str !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(str)) {
+        throw new TypeError("Invalid base64 string");
+    }
+    return Buffer.from(str, 'base64');
+}
+
 
 /**
  * Uses the SubtleCrypto library to implement a range of utility functions suitable for FIDO operations.
@@ -1012,7 +1061,12 @@ function getPublicKeyFromCertBytes(cert, verificationAlgorithmId) {
                 "1.2.840.10045.2.1",
 
                 // RSA public key
-                "1.2.840.113549.1.1.1"
+                "1.2.840.113549.1.1.1",
+
+                // ML-DSA-44 (alg -48), ML-DSA-65 (alg -49), ML-DSA-87 (alg -50)
+                "2.16.840.1.101.3.4.3.17",
+                "2.16.840.1.101.3.4.3.18",
+                "2.16.840.1.101.3.4.3.19"
             ];
 
             // this is really a sanity check for the types of subject public keys we support in a certificate
@@ -1228,5 +1282,11 @@ module.exports = {
     getPublicKeyFromCertBytes: getPublicKeyFromCertBytes,
     signBytesWithPrivateKey: signBytesWithPrivateKey,
     validateSignature: validateSignature,
-    calculateSKI: calculateSKI
+    calculateSKI: calculateSKI,
+    toHex: toHex,
+    fromHex: fromHex,
+    toBase64Url: toBase64Url,
+    fromBase64Url: fromBase64Url,
+    toBase64: toBase64,
+    fromBase64: fromBase64
 }
