@@ -333,20 +333,47 @@ This is what `fidoutilsConfig.mtc` (Task 3.1) and the `mtc-debug` extension (Tas
 
 ---
 
-### Task 4: In-Band Diagnostic Extension (`mtcDebug` / `mtc-debug`)
+### Task 4: In-Band Diagnostic Extension (`mtcDebug` / `mtc-debug`)  ✅ COMPLETE
 **Target Files**: `fidoutils.js`
 
-- [ ] **4.1 Authenticator Data Extension Generation**:
+- [x] **4.1 Authenticator Data Extension Generation**:
   - When `cco.publicKey.extensions?.mtcDebug === true` and `attestationFormat === "mtc"`:
     - Build `mtc-debug` CBOR map: `{ pubKey, notBefore, notAfter, firmwareVersion, mtcProof, rootHash, deviceSerial }`.
     - Set extension flag `0x80` in `authData` flags byte.
     - Append CBOR-encoded extensions to `authData`.
-- [ ] **4.2 Client Extension Output Handling**:
+- [x] **4.2 Client Extension Output Handling**:
   - Populate `result.spkc.getClientExtensionResults.mtcDebug`.
   - Ensure correct Base64URL string encoding of `pubKey`, `mtcProof`, and `rootHash` when converted to JSON.
 
 **Verification**:
 - Perform registration with `extensions: { mtcDebug: true }` and confirm presence of `authenticatorData.extensions["mtc-debug"]` and `clientExtensionResults.mtcDebug`.
+- Four tests appended to `test_mtc_primitives.js` (section "mtcDebug / mtc-debug in-band diagnostic extension (Task 4)"). `npm run test:mtc-primitives`: 34 pass, 0 fail (30 prior + 4 new).
+
+**Implementation notes (Task 4 — read before starting Task 5)**:
+
+*Where the code is (`fidoutils.js`)*
+- New helper `buildMTCDebugExtension(enterpriseAttestation, [mtcOverrideConfig])` (placed just before `buildMTCAttestationStatement`; internal, not exported). Returns `{ authenticatorOutput, clientOutput }`:
+  - `authenticatorOutput`: map for `authData.extensions["mtc-debug"]`; `pubKey`/`mtcProof`/`rootHash` are `Buffer`s (CBOR byte strings), `notBefore`/`notAfter`/`firmwareVersion` are numbers, `deviceSerial` a text string.
+  - `clientOutput`: the `clientExtensionResults.mtcDebug` object in its **`toJSON()` form** (`pubKey`, `mtcProof`, `rootHash` already base64url strings; other members unchanged).
+- `processCredentialCreationOptions` now: (1) before building flags, computes `mtcDebug` only if `attestationFormat == "mtc"` **and** `cco.publicKey.extensions.mtcDebug === true` (any other format silently ignores the input per §10.2.1 authenticator processing); (2) sets flag `0x80` (ED) in addition to `0x40` (AT); (3) appends `CBOR({ "mtc-debug": {...} })` to `authData` immediately after the attested credential data and **before** `buildMTCAttestationStatement` runs, so `attStmt.sig` (over `authData || clientDataHash`) covers the extension bytes; (4) sets `result.spkc.getClientExtensionResults.mtcDebug`. For non-mtc / not-requested cases `getClientExtensionResults` stays `{}` as before.
+- `extensions` was already copied through by `attestationOptionsResponeToCredentialCreationOptions`, so a server `extensions: { mtcDebug: true }` in the attestation options reaches the authenticator emulation with no further plumbing.
+
+*Config consumed (`fidoutilsConfig.mtc`, binary values hex — exactly what `generate_attestation_certs` already emits)*
+- Required for the extension: `coseKey` (hex canonical CBOR COSE_Key; the same bytes committed by `FidoMtcLogEntry.pkHash`). Missing => `Error("MTC configuration missing 'coseKey' ...")`.
+- Optional, emitted only when present: `notBefore`, `notAfter`, `firmwareVersion`, `mtcProof` (hex concatenated 32B siblings), `rootHash` (hex 32B). `notBefore`/`notAfter`/`firmwareVersion` are converted with `Number()` (safe: `253402300799 < 2^53`).
+- `deviceSerial` (config field, not produced by the generators) is emitted **only if enterprise attestation is "granted"**, which this emulation models as `cco.publicKey.attestation === "enterprise"`; otherwise it is omitted per spec ("MUST NOT include `deviceSerial` if Enterprise Attestation was not granted").
+
+*Behaviours Task 5 / 6 should rely on*
+- The generated config block `mtc` (from `certs/generate_attestation_certs.*`) already contains everything needed (`coseKey`, `notBefore`, `notAfter`, `mtcProof`, `rootHash`), so `extensions: { mtcDebug: true }` produces a fully self-describing registration; the RP can verify offline using `unpackAuthData(authData).extensions["mtc-debug"]` (a decoded object: byte strings come back as byte arrays/Buffers — wrap with `Buffer.from(...)`; integers as numbers).
+- `mtc-debug` `mtcProof` is the raw concatenated sibling hashes (leaf -> root); split into 32 B chunks before calling `verifyRFC9162MerkleProof`. The leaf index is `serial & 0xFFFFFFFFFFFF` from `attStmt.mtcCert.serial`; the subtree `start`/`end` are **not** in the extension (only `rootHash`), so the in-band path can only check the Merkle path against the in-band `rootHash` (Levels 3/4) — it cannot verify the Level 2 checkpoint signature without MDS metadata (`subtrees[].start/end/signature`) and is therefore "offline conformance mode" per §8.10.
+- The RP-side rule from the spec note is **not** implemented yet (Task 5): if `mtc-debug` is present in `authenticatorData.extensions` or `clientExtensionResults.mtcDebug` is present when `fmt != "mtc"`, the RP MUST fail registration.
+
+*Caveats / not done*
+- The client-side rule "abort with `NotAllowedError` if the authenticator returns `mtc-debug` while `fmt` is not `mtc`" is a browser concern and is not modelled (this module emulates client+authenticator and never produces that combination).
+- `getClientExtensionResults` here is the pre-existing (non-standard) property name on the emulated `spkc`; it holds the JSON-serialized form directly, so no `toJSON()` step is needed by callers.
+- The `.env` file's `FIDO2_CLIENT_CONFIG` was not changed; regenerate it with `certs/generate_attestation_certs.sh` if the `mtc` block is missing.
+
+*Next up*: **Task 5** (`verifyMTCAttestation` Relying Party verification pipeline).
 
 ---
 

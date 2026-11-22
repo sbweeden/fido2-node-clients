@@ -403,15 +403,27 @@ async function processCredentialCreationOptions(
 	// first rpIdHashBytes
 	authData.push(...sha256(cco.publicKey.rp.id));
 
+	// mtc-debug extension (WebAuthn L4 §10.2.1): only honoured when the format is "mtc"
+	let mtcDebug = null;
+	if (
+		attestationFormat == "mtc" &&
+		cco.publicKey.extensions != null &&
+		cco.publicKey.extensions.mtcDebug === true
+	) {
+		mtcDebug = buildMTCDebugExtension(cco.publicKey.attestation === "enterprise");
+	}
+
 	/*
 	 * flags
 	 *  - conditionally set UV, UP and indicate attested credential data is present
 	 *  - Note we never set UV for fido-u2f
+	 *  - set ED (0x80) when authenticator extension outputs follow the attested credential data
 	 */
 	let flags =
 		(up ? 0x01 : 0x00) |
 		(uv && attestationFormat != "fido-u2f" ? 0x04 : 0x00) |
-		0x40;
+		0x40 |
+		(mtcDebug != null ? 0x80 : 0x00);
 	authData.push(flags);
 
 	// add 4 bytes of signature counter - we use 0, to suggest we don't support the counter.
@@ -499,6 +511,12 @@ async function processCredentialCreationOptions(
 	// add attestedCredentialData to authData
 	authData.push(...attestedCredentialData);
 
+	// authenticator extension outputs follow the attested credential data and must be
+	// present before the attestation statement is built, since attStmt.sig covers authData
+	if (mtcDebug != null) {
+		authData.push(...myCBOREncode({ "mtc-debug": mtcDebug.authenticatorOutput }));
+	}
+
 	// build attestation statement depending on requested format
 	let attStmt = null;
 	if (attestationFormat == "none") {
@@ -578,8 +596,11 @@ async function processCredentialCreationOptions(
 	// type (from Credential defined here: https://w3c.github.io/webappsec-credential-management/#credential)
 	result.spkc.type = "public-key";
 
-	// extension results - for now we populate as empty map
+	// extension results - empty unless an extension produced client output
 	result.spkc.getClientExtensionResults = {};
+	if (mtcDebug != null) {
+		result.spkc.getClientExtensionResults.mtcDebug = mtcDebug.clientOutput;
+	}
 
 	return result;
 }
@@ -1128,6 +1149,56 @@ function buildTPMAttestationStatement(
 
 	return attStmt;
 }
+
+/**
+ * Builds the mtc-debug extension outputs (WebAuthn Level 4 §10.2.1) from fidoutilsConfig.mtc.
+ * Only call when fmt is "mtc". Returns both representations:
+ *  - authenticatorOutput: CBOR-encodable map for authenticatorData.extensions["mtc-debug"] (byte strings)
+ *  - clientOutput: clientExtensionResults.mtcDebug in its toJSON() form (ArrayBuffer members base64url encoded)
+ * Config fields (binary values hex): coseKey (required), notBefore, notAfter, firmwareVersion,
+ * mtcProof, rootHash, deviceSerial. deviceSerial is only emitted when enterprise attestation is granted.
+ *
+ * @param {boolean} enterpriseAttestation - true if enterprise attestation was requested and granted
+ * @param {object} [mtcOverrideConfig] - Optional override for fidoutilsConfig.mtc
+ */
+function buildMTCDebugExtension(enterpriseAttestation, mtcOverrideConfig) {
+	let mtcConfig = mtcOverrideConfig || (fidoutilsConfig && fidoutilsConfig.mtc);
+	if (!mtcConfig) {
+		throw new Error("MTC configuration not found in fidoutilsConfig.mtc");
+	}
+	if (!mtcConfig.coseKey) {
+		throw new Error("MTC configuration missing 'coseKey' required by the mtc-debug extension");
+	}
+
+	let toBytes = function(v) {
+		return Buffer.isBuffer(v) || v instanceof Uint8Array
+			? Buffer.from(v)
+			: Buffer.from(mykeyutil.fromHex(String(v).replace(/:/g, "")));
+	};
+
+	let authenticatorOutput = { pubKey: toBytes(mtcConfig.coseKey) };
+	let clientOutput = { pubKey: mykeyutil.toBase64Url(authenticatorOutput.pubKey) };
+
+	if (enterpriseAttestation && mtcConfig.deviceSerial != null) {
+		authenticatorOutput.deviceSerial = String(mtcConfig.deviceSerial);
+		clientOutput.deviceSerial = authenticatorOutput.deviceSerial;
+	}
+	for (const name of ["notBefore", "notAfter", "firmwareVersion"]) {
+		if (mtcConfig[name] != null) {
+			authenticatorOutput[name] = Number(mtcConfig[name]);
+			clientOutput[name] = authenticatorOutput[name];
+		}
+	}
+	for (const name of ["mtcProof", "rootHash"]) {
+		if (mtcConfig[name] != null) {
+			authenticatorOutput[name] = toBytes(mtcConfig[name]);
+			clientOutput[name] = mykeyutil.toBase64Url(authenticatorOutput[name]);
+		}
+	}
+
+	return { authenticatorOutput: authenticatorOutput, clientOutput: clientOutput };
+}
+
 
 /**
  * Builds a Merkle Tree Certificate (MTC) Attestation Statement (fmt: "mtc")
