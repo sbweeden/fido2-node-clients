@@ -297,15 +297,15 @@ This is what `fidoutilsConfig.mtc` (Task 3.1) and the `mtc-debug` extension (Tas
 - `fidoutils.js` still does not read `fidoutilsConfig.mtc`; that is Task 3. The `jsrsasign` import in the node generator remains only for the legacy U2F/packed/TPM code; none of the new MTC code uses it.
 - Changing an existing `fidotest-mtc.json` is not detected: delete `fidotest-mtc.json` (or run `cleanup.sh`) to regenerate the tree/checkpoint after replacing keys or the AAGUID.
 
-*Next up*: **Task 3** (`buildMTCAttestationStatement` in `fidoutils.js`).
+*Next up*: **Task 4** (In-Band Diagnostic Extension `mtcDebug` / `mtc-debug`).
 
 ---
 
-### Task 3: Build Authenticator MTC Attestation Statement
+### Task 3: Build Authenticator MTC Attestation Statement  ✅ COMPLETE
 **Target Files**: `fidoutils.js`
 
-- [ ] **3.1 Implement `buildMTCAttestationStatement`**:
-  - Extract MTC config (`caId`, `serial`, `alg`, `privateKey`) from `fidoutilsConfig.mtc`.
+- [x] **3.1 Implement `buildMTCAttestationStatement`**:
+  - Extract MTC config (`caId`, `serial`, `alg`, `privateKeyHex` / `privateKey`) from `fidoutilsConfig.mtc`.
   - Construct `verificationData = Buffer.concat([Buffer.from(authData), Buffer.from(clientDataHash)])` (raw bytes, no outer pre-hash).
   - Generate signature `sig = await mykeyutil.signBytesWithPrivateKey(alg, privateKey, verificationData)`.
   - Construct and return `attStmt`:
@@ -319,12 +319,17 @@ This is what `fidoutilsConfig.mtc` (Task 3.1) and the `mtc-debug` extension (Tas
       }
     }
     ```
-- [ ] **3.2 Integrate with `processCredentialCreationOptions`**:
+- [x] **3.2 Integrate with `processCredentialCreationOptions`**:
   - Handle `attestationFormat === "mtc"`.
   - Package `attestationObject = { fmt: "mtc", attStmt, authData: prepareBAForCBOR(authData) }`.
+  - Retain `buildMTCAttestationStatement` as an internal helper within `fidoutils.js` matching `buildPackedAttestationStatement`, `buildFidoU2FAttestationStatement`, and `buildTPMAttestationStatement`.
+  - Fixed 64-bit uint decoding constant definitions (`POW_2_24`, `POW_2_32`, `POW_2_53`) in `cbor.decode` override.
 
 **Verification**:
-- Test creation of MTC attestation object and decode via CBOR to verify structure matches CDDL specification.
+- Automated unit tests added to `test_mtc_primitives.js`:
+  - `processCredentialCreationOptions: creates valid fmt: "mtc" attestation statement` (verifies CBOR encoding, CDDL structure, AAGUID inclusion, and signature validity over raw `authData || clientDataHash` with ML-DSA-44 batch key).
+  - `processCredentialCreationOptions: supports ML-DSA-87 (alg -50) batch keys for MTC` (verifies ML-DSA-87 batch key signing and verification).
+- `npm run test:mtc-primitives` executed: 30 pass, 0 fail.
 
 ---
 

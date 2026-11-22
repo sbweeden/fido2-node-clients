@@ -3,6 +3,7 @@
 const cbor = require('cbor'); // https://www.npmjs.com/package/cbor
 const jsrsasign = require('jsrsasign'); // https://www.npmjs.com/package/jsrsasign
 const CryptoJS = require('crypto-js'); // https://www.npmjs.com/package/crypto-js
+const mycertutil = require('./mycertutil.js');
 const mykeyutil = require('./mykeyutil.js');
 
 // if true this hashes the private key bytes to produce a credential ID (non-reversable)
@@ -40,6 +41,13 @@ let exampleConfig = {
 
 	"packed-self": {
 		"aaguid": "1811ec8b8a91459299f217f35d53242e"
+	},
+
+	"mtc": {
+		"aaguid": "00000000-0000-0000-0000-000000000000",
+		"caId": "83993f0101",
+		"serial": 281474976710656,
+		"alg": -48
 	}
 };
 
@@ -423,15 +431,14 @@ async function processCredentialCreationOptions(
 
 	// aaguid - 16 bytes, if we have one defined use it, otherwise all zeros
 
-	let aaguid =
-		fidoutilsConfig[attestationFormat] == null ||
-			fidoutilsConfig[attestationFormat].aaguid == null
-			? null
-			: jsrsasign.b64toBA(
-				jsrsasign.hextob64(
-					fidoutilsConfig[attestationFormat].aaguid.replace(/-/g, "")
-				)
-			);
+	let aaguid = null;
+	if (
+		fidoutilsConfig[attestationFormat] != null &&
+		fidoutilsConfig[attestationFormat].aaguid != null
+	) {
+		let aaguidHex = fidoutilsConfig[attestationFormat].aaguid.replace(/-/g, "");
+		aaguid = Array.from(mykeyutil.fromHex(aaguidHex));
+	}
 	if (aaguid == null) {
 		aaguid = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 	}
@@ -528,6 +535,11 @@ async function processCredentialCreationOptions(
 			clientDataHash,
 			authData,
 			credIdBytes
+		);
+	} else if (attestationFormat == "mtc") {
+		attStmt = await buildMTCAttestationStatement(
+			clientDataHash,
+			authData
 		);
 	} else {
 		throw ("Unsupported attestationFormat: " + attestationFormat);
@@ -1117,12 +1129,96 @@ function buildTPMAttestationStatement(
 	return attStmt;
 }
 
+/**
+ * Builds a Merkle Tree Certificate (MTC) Attestation Statement (fmt: "mtc")
+ * per WebAuthn Level 4 §8.10.
+ *
+ * @param {Array<number>|Uint8Array|Buffer} clientDataHash - SHA-256 hash of clientDataJSON
+ * @param {Array<number>|Uint8Array|Buffer} authData - Authenticator data bytes
+ * @param {object} [mtcOverrideConfig] - Optional override for fidoutilsConfig.mtc
+ * @returns {Promise<object>} attStmt object formatted for CBOR encoding
+ */
+async function buildMTCAttestationStatement(
+	clientDataHash,
+	authData,
+	mtcOverrideConfig
+) {
+	let mtcConfig = mtcOverrideConfig || (fidoutilsConfig && fidoutilsConfig.mtc);
+	if (!mtcConfig) {
+		throw new Error("MTC configuration not found in fidoutilsConfig.mtc");
+	}
+
+	let caId = mtcConfig.caId;
+	if (!caId) {
+		throw new Error("MTC configuration missing 'caId'");
+	}
+	let caIdBytes;
+	if (typeof caId === "string") {
+		caIdBytes = mykeyutil.fromHex(caId.replace(/:/g, ""));
+	} else if (Buffer.isBuffer(caId) || caId instanceof Uint8Array || Array.isArray(caId)) {
+		caIdBytes = Buffer.from(caId);
+	} else {
+		throw new TypeError("Invalid caId in MTC configuration");
+	}
+
+	let serial = mtcConfig.serial;
+	if (serial === undefined || serial === null) {
+		throw new Error("MTC configuration missing 'serial'");
+	}
+	if (typeof serial === "string") {
+		serial = Number(serial);
+	} else if (typeof serial === "bigint") {
+		if (serial <= BigInt(Number.MAX_SAFE_INTEGER)) {
+			serial = Number(serial);
+		}
+	}
+
+	let alg = mtcConfig.alg;
+	if (alg === undefined || alg === null) {
+		throw new Error("MTC configuration missing 'alg'");
+	}
+
+	let privateKey = mtcConfig.privateKey;
+	if (!privateKey) {
+		if (mtcConfig.privateKeyHex) {
+			privateKey = await mykeyutil.getPrivateKeyFromHex(
+				alg,
+				mtcConfig.privateKeyHex.replace(/:/g, "")
+			);
+		} else {
+			throw new Error("MTC configuration missing 'privateKey' or 'privateKeyHex'");
+		}
+	}
+
+	// verificationData = authenticatorData || clientDataHash (raw bytes, no outer pre-hash)
+	let authDataBuf = Buffer.isBuffer(authData) ? authData : Buffer.from(authData);
+	let clientDataHashBuf = Buffer.isBuffer(clientDataHash) ? clientDataHash : Buffer.from(clientDataHash);
+	let verificationData = Buffer.concat([authDataBuf, clientDataHashBuf]);
+
+	// Generate signature using authenticator batch private key
+	let sigBytes = await mykeyutil.signBytesWithPrivateKey(alg, privateKey, verificationData);
+
+	let attStmt = {
+		alg: alg,
+		sig: prepareBAForCBOR(sigBytes),
+		mtcCert: {
+			caId: prepareBAForCBOR(caIdBytes),
+			serial: serial
+		}
+	};
+
+	return attStmt;
+}
+
 
 /*
-* Override the CBOR decode method with a slightly modified version that handles remaining bytes in a 
+* Override the CBOR decode method with a slightly modified version that handles remaining bytes in a
 * way that allows implementation of cbor.decodeVariable
 */
 cbor.decode = function(data, tagger, simpleValue) {
+	var POW_2_24 = Math.pow(2, -24);
+	var POW_2_32 = Math.pow(2, 32);
+	var POW_2_53 = Math.pow(2, 53);
 	var dataView = new DataView(data);
 	var offset = 0;
   
