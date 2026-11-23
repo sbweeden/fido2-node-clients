@@ -1281,6 +1281,386 @@ async function buildMTCAttestationStatement(
 	return attStmt;
 }
 
+/*
+ * Relying Party verification of Merkle Tree Certificate (MTC) attestation (WebAuthn Level 4 §8.10).
+ * Nothing below uses jsrsasign.
+ */
+
+// COSE algorithms an RP accepts for attStmt.alg by default (ML-DSA-44/65/87 and ES256)
+const MTC_DEFAULT_ACCEPTABLE_ALGS = [-48, -49, -50, -7];
+const MTC_LEAF_INDEX_MASK = 0xFFFFFFFFFFFFn; // serial & mask = leaf index, serial >> 48 = logNumber
+
+function mtcFail(reason) {
+	throw new Error("MTC attestation verification failed: " + reason);
+}
+
+function mtcAsObject(o, name) {
+	if (o instanceof Map) {
+		o = Object.fromEntries(o);
+	}
+	if (o == null || typeof o !== "object" || Array.isArray(o) || ArrayBuffer.isView(o) || o instanceof ArrayBuffer) {
+		mtcFail(name + " is not a map");
+	}
+	return o;
+}
+
+// byte string (Buffer/Uint8Array/ArrayBuffer/array of bytes) to Buffer
+function mtcToBuffer(v, name) {
+	if (Buffer.isBuffer(v)) {
+		return v;
+	} else if (v instanceof Uint8Array) {
+		return Buffer.from(v.buffer, v.byteOffset, v.byteLength);
+	} else if (v instanceof ArrayBuffer) {
+		return Buffer.from(v);
+	} else if (Array.isArray(v) && v.every((b) => Number.isInteger(b) && b >= 0 && b <= 255)) {
+		return Buffer.from(v);
+	}
+	return mtcFail(name + " is not a byte string");
+}
+
+// like mtcToBuffer, but metadata (MDS3 style JSON) carries binary values as standard base64 strings
+function mtcMetaBytes(v, name) {
+	if (typeof v === "string") {
+		try {
+			return mykeyutil.fromBase64(v);
+		} catch (e) {
+			mtcFail(name + " is not valid base64");
+		}
+	}
+	return mtcToBuffer(v, name);
+}
+
+// unsigned 64-bit integer (number, bigint or decimal string) to BigInt
+function mtcToUint64(v, name) {
+	let result = null;
+	try {
+		if ((typeof v === "number" && Number.isSafeInteger(v)) || typeof v === "bigint" || (typeof v === "string" && /^[0-9]+$/.test(v))) {
+			result = BigInt(v);
+		}
+	} catch (e) {
+		result = null;
+	}
+	if (result === null || result < 0n || result >= (1n << 64n)) {
+		mtcFail(name + " is not an unsigned 64-bit integer");
+	}
+	return result;
+}
+
+function mtcDecodeAttestationObject(attestationObject) {
+	let ao = attestationObject;
+	try {
+		if (typeof ao === "string") {
+			ao = mykeyutil.fromBase64Url(ao);
+		}
+		if (ao instanceof Uint8Array || ao instanceof ArrayBuffer) {
+			ao = cbor.decodeFirstSync(mtcToBuffer(ao, "attestationObject"));
+		}
+	} catch (e) {
+		mtcFail("attestationObject cannot be decoded: " + e.message);
+	}
+	return mtcAsObject(ao, "attestationObject");
+}
+
+/**
+ * Verifies the Level 3 Merkle inclusion proof and (when a signature is supplied) the Level 1/2 checkpoint signature.
+ * Returns null on success, or a reason string.
+ */
+async function mtcCheckSubtree(subtree, caId, logNumber, leafIndex, leafHash, proofChunks, rootCertsDER, mustVerifyCheckpoint) {
+	let rootHash = mtcMetaBytes(subtree.rootHash, "subtrees[].rootHash");
+	if (!mycertutil.verifyRFC9162MerkleProof({
+		leafHash: leafHash,
+		proof: proofChunks,
+		leafIndex: leafIndex,
+		start: subtree.start,
+		end: subtree.end,
+		rootHash: rootHash
+	})) {
+		return "Merkle inclusion proof does not climb to the subtree root hash";
+	}
+	if (!mustVerifyCheckpoint) {
+		return null;
+	}
+
+	let checkpoint = mycertutil.buildFidoMtcSubtreeCheckpoint({
+		caId: caId,
+		logNumber: logNumber,
+		start: subtree.start,
+		end: subtree.end,
+		rootHash: rootHash
+	});
+	let signature = mtcMetaBytes(subtree.signature, "subtrees[].signature");
+	for (const der of rootCertsDER) {
+		try {
+			let rootKey = await mykeyutil.getPublicKeyFromCertBytes(Array.from(der), subtree.alg);
+			if (await mykeyutil.validateSignature(subtree.alg, rootKey, checkpoint, signature)) {
+				return null;
+			}
+		} catch (e) {
+			// root certificate with a different key type: try the next one
+		}
+	}
+	return "subtree checkpoint signature is not valid for any attestation root certificate";
+}
+
+/**
+ * Relying Party verification of a Merkle Tree Certificate attestation (fmt: "mtc"), WebAuthn Level 4 §8.10.
+ *
+ * Levels verified (see MTC_IMPLEMENTATION_PLAN.md): 5 attStmt.sig over authenticatorData || clientDataHash with the batch key;
+ * 4 the batch key (COSE_Key) is the one committed in the leaf; 3 the RFC 9162 inclusion proof climbs to the subtree root hash;
+ * 2/1 the subtree checkpoint signature verifies with the vendor root CA certificate (MDS mode only).
+ * Level 0 (the MDS3 BLOB JWS) is NOT checked here: mdsMetadata must already be an authenticated MetadataStatement.
+ *
+ * Two ways to resolve the attestation key entry for (attStmt.mtcCert.caId, serial):
+ *  - MDS mode: mdsMetadata.mtcTrustAnchors[].batchKeys[] (the shape produced by certs/generate_attestation_certs.js);
+ *    the checkpoint signature is verified with mdsMetadata.attestationRootCertificates.
+ *  - In-band (offline conformance) mode, only if options.allowInBand is true and the entry is not in mdsMetadata:
+ *    authenticatorData.extensions["mtc-debug"]. There is no trust anchor, so only Levels 3-5 are checked and the result
+ *    has trusted: false. The subtree is assumed to be an aligned perfect tree of 2^len(mtcProof)/32 leaves.
+ *
+ * Not covered: enterprise mode (manufacturer manifest / device serial inventory check, spec step 9).
+ *
+ * @param {object|Buffer|string} attestationObject - decoded { fmt, attStmt, authData }, CBOR bytes, or base64url string
+ * @param {Array<number>|Uint8Array|Buffer} clientDataHash - SHA-256 of clientDataJSON
+ * @param {object} [mdsMetadata] - MDS3 MetadataStatement containing mtcTrustAnchors and attestationRootCertificates (base64)
+ *   An anchor may carry revokedSerialRanges: [{ start, end }] (inclusive serials) which are rejected.
+ * @param {object} [options] - { allowInBand: false, acceptableAlgs: [-48,-49,-50,-7], now: <unix seconds> }
+ * @returns {Promise<object>} resolves with details of the verified attestation; rejects with an Error if verification fails
+ */
+async function verifyMTCAttestation(attestationObject, clientDataHash, mdsMetadata, options) {
+	options = options || {};
+	let acceptableAlgs = options.acceptableAlgs || MTC_DEFAULT_ACCEPTABLE_ALGS;
+
+	// Step 1: CDDL syntax of fmt and mtcStmtFormat { alg, sig, mtcCert: { caId, serial } }
+	let att = mtcDecodeAttestationObject(attestationObject);
+	if (att.fmt !== "mtc") {
+		mtcFail('fmt is not "mtc"');
+	}
+	let attStmt = mtcAsObject(att.attStmt, "attStmt");
+	if (Object.keys(attStmt).sort().join() !== "alg,mtcCert,sig") {
+		mtcFail("attStmt must contain exactly alg, sig and mtcCert");
+	}
+	let alg = attStmt.alg;
+	if (!Number.isInteger(alg)) {
+		mtcFail("attStmt.alg is not an integer");
+	}
+	let sig = mtcToBuffer(attStmt.sig, "attStmt.sig");
+	if (sig.length === 0) {
+		mtcFail("attStmt.sig is empty");
+	}
+	let mtcCert = mtcAsObject(attStmt.mtcCert, "attStmt.mtcCert");
+	if (Object.keys(mtcCert).sort().join() !== "caId,serial") {
+		mtcFail("attStmt.mtcCert must contain exactly caId and serial");
+	}
+	let caId = mtcToBuffer(mtcCert.caId, "attStmt.mtcCert.caId");
+	if (caId.length === 0 || caId.length > 0xffff) {
+		mtcFail("attStmt.mtcCert.caId has an invalid length");
+	}
+	let serial = mtcToUint64(mtcCert.serial, "attStmt.mtcCert.serial");
+
+	// Step 2: alg acceptable to the RP
+	if (acceptableAlgs.indexOf(alg) < 0) {
+		mtcFail("alg " + alg + " is not acceptable");
+	}
+
+	// Step 3: verificationData = authenticatorData || clientDataHash (raw bytes, no outer pre-hash)
+	let authData = mtcToBuffer(att.authData, "authData");
+	let clientDataHashBuf = mtcToBuffer(clientDataHash, "clientDataHash");
+	if (clientDataHashBuf.length !== 32) {
+		mtcFail("clientDataHash must be 32 bytes");
+	}
+	let verificationData = Buffer.concat([authData, clientDataHashBuf]);
+
+	let unpacked = unpackAuthData(authData);
+	if (!unpacked.status || unpacked.attestedCredData == null || unpacked.attestedCredData.aaguid == null) {
+		mtcFail("authenticatorData is malformed or has no attested credential data");
+	}
+	let aaguid = Buffer.from(unpacked.attestedCredData.aaguid);
+	let debugExt = (unpacked.extensions != null && unpacked.extensions["mtc-debug"] != null)
+		? mtcAsObject(unpacked.extensions["mtc-debug"], "authenticatorData.extensions[mtc-debug]")
+		: null;
+
+	// Step 4: resolve the attestation key entry
+	let entry = null;
+	let anchor = null;
+	if (mdsMetadata != null) {
+		anchor = (mdsMetadata.mtcTrustAnchors || []).find((a) => mtcMetaBytes(a.caId, "mtcTrustAnchors[].caId").equals(caId)) || null;
+		let batchKey = anchor == null ? null : (anchor.batchKeys || []).find((k) => mtcToUint64(k.serial, "batchKeys[].serial") === serial);
+		if (batchKey != null) {
+			if (mdsMetadata.aaguid != null && !mykeyutil.fromHex(String(mdsMetadata.aaguid).replace(/-/g, "")).equals(aaguid)) {
+				mtcFail("authenticatorData aaguid does not match the metadata statement aaguid");
+			}
+			entry = {
+				mode: "mds",
+				coseKeyBytes: mtcMetaBytes(batchKey.coseKey, "batchKeys[].coseKey"),
+				notBefore: mtcToUint64(batchKey.notBefore, "batchKeys[].notBefore"),
+				notAfter: mtcToUint64(batchKey.notAfter, "batchKeys[].notAfter"),
+				firmwareVersion: batchKey.firmwareVersion == null ? null : mtcToUint64(batchKey.firmwareVersion, "batchKeys[].firmwareVersion"),
+				extensions: batchKey.extensions == null ? null : mtcMetaBytes(batchKey.extensions, "batchKeys[].extensions"),
+				proof: batchKey.mtcProof == null ? null : mtcMetaBytes(batchKey.mtcProof, "batchKeys[].mtcProof")
+			};
+		}
+	}
+	if (entry == null) {
+		if (!options.allowInBand || debugExt == null) {
+			mtcFail("no batch key found for (caId, serial) in the metadata" + (debugExt == null ? "" : " and in-band verification is not allowed"));
+		}
+		if (debugExt.pubKey == null || debugExt.notBefore == null || debugExt.notAfter == null || debugExt.mtcProof == null || debugExt.rootHash == null) {
+			mtcFail("mtc-debug extension must contain pubKey, notBefore, notAfter, mtcProof and rootHash");
+		}
+		entry = {
+			mode: "in-band",
+			coseKeyBytes: mtcToBuffer(debugExt.pubKey, "mtc-debug.pubKey"),
+			notBefore: mtcToUint64(debugExt.notBefore, "mtc-debug.notBefore"),
+			notAfter: mtcToUint64(debugExt.notAfter, "mtc-debug.notAfter"),
+			firmwareVersion: debugExt.firmwareVersion == null ? null : mtcToUint64(debugExt.firmwareVersion, "mtc-debug.firmwareVersion"),
+			extensions: null,
+			proof: mtcToBuffer(debugExt.mtcProof, "mtc-debug.mtcProof"),
+			rootHash: mtcToBuffer(debugExt.rootHash, "mtc-debug.rootHash")
+		};
+	} else if (debugExt != null && debugExt.pubKey != null && !mtcToBuffer(debugExt.pubKey, "mtc-debug.pubKey").equals(entry.coseKeyBytes)) {
+		mtcFail("mtc-debug pubKey differs from the key resolved from the metadata");
+	}
+
+	// Step 5: COSE_Key must be canonical, its alg (3) must match attStmt.alg, and sig must verify over verificationData
+	let coseMap;
+	try {
+		coseMap = cbor.decodeFirstSync(entry.coseKeyBytes);
+		if (!(coseMap instanceof Map) || !cbor.encodeCanonical(coseMap).equals(entry.coseKeyBytes)) {
+			throw new Error("not a canonical CBOR map");
+		}
+	} catch (e) {
+		mtcFail("batch key is not a canonical CBOR COSE_Key: " + e.message);
+	}
+	if (coseMap.get(3) !== alg) {
+		mtcFail("COSE_Key alg does not match attStmt.alg");
+	}
+	let coseObj = {};
+	for (const [k, v] of coseMap) {
+		coseObj[String(k)] = Buffer.isBuffer(v) ? Array.from(v) : v;
+	}
+	let sigValid = false;
+	try {
+		let batchPublicKey = await mykeyutil.getPublicKeyFromCOSE(coseObj);
+		sigValid = await mykeyutil.validateSignature(alg, batchPublicKey, verificationData, sig);
+	} catch (e) {
+		sigValid = false;
+	}
+	if (!sigValid) {
+		mtcFail("attStmt.sig is not a valid signature over authenticatorData || clientDataHash");
+	}
+
+	// Step 6: notBefore <= now <= notAfter
+	let now = BigInt(Math.floor(options.now != null ? options.now : Date.now() / 1000));
+	if (now < entry.notBefore || now > entry.notAfter) {
+		mtcFail("the batch key is outside its validity period");
+	}
+
+	// Step 7: revocation (optional anchor.revokedSerialRanges, inclusive serial ranges)
+	if (anchor != null && Array.isArray(anchor.revokedSerialRanges)) {
+		for (const r of anchor.revokedSerialRanges) {
+			if (serial >= mtcToUint64(r.start, "revokedSerialRanges[].start") && serial <= mtcToUint64(r.end, "revokedSerialRanges[].end")) {
+				mtcFail("serial is revoked");
+			}
+		}
+	}
+
+	// Step 8: Merkle commitment (Levels 3/4, plus the Level 2/1 checkpoint signature in MDS mode)
+	if (entry.proof == null) {
+		mtcFail("mtcProof is required: the Merkle commitment of the batch key cannot be checked");
+	}
+	if (entry.proof.length % 32 !== 0) {
+		mtcFail("mtcProof is not a multiple of 32 bytes");
+	}
+	let proofChunks = [];
+	for (let i = 0; i < entry.proof.length; i += 32) {
+		proofChunks.push(entry.proof.subarray(i, i + 32));
+	}
+
+	let leafIndex = serial & MTC_LEAF_INDEX_MASK;
+	let logNumber = serial >> 48n;
+	let leafHash = mycertutil.computeFidoMtcLeafHash(mycertutil.buildFidoMtcLogEntry({
+		caId: caId,
+		serial: serial,
+		notBefore: entry.notBefore,
+		notAfter: entry.notAfter,
+		aaguid: aaguid,
+		firmwareVersion: entry.firmwareVersion,
+		coseKeyBytes: entry.coseKeyBytes,
+		extensions: entry.extensions
+	}));
+
+	let subtree = null;
+	if (entry.mode === "mds") {
+		let rootCertsDER = (mdsMetadata.attestationRootCertificates || []).map((c) => mtcMetaBytes(c, "attestationRootCertificates[]"));
+		let candidates = (anchor.subtrees || []).filter((s) =>
+			BigInt(s.logNumber) === logNumber && BigInt(s.start) <= leafIndex && leafIndex < BigInt(s.end));
+		if (candidates.length === 0) {
+			mtcFail("no subtree in the metadata covers this serial");
+		}
+		let lastReason = null;
+		for (const candidate of candidates) {
+			lastReason = await mtcCheckSubtree(candidate, caId, logNumber, leafIndex, leafHash, proofChunks, rootCertsDER, true);
+			if (lastReason == null) {
+				subtree = candidate;
+				break;
+			}
+		}
+		if (subtree == null) {
+			mtcFail(lastReason);
+		}
+	} else {
+		if (proofChunks.length > 48) {
+			mtcFail("mtcProof is too long");
+		}
+		let size = 1n << BigInt(proofChunks.length);
+		let start = leafIndex - (leafIndex % size);
+		subtree = { start: start, end: start + size, rootHash: entry.rootHash };
+		let reason = await mtcCheckSubtree(subtree, caId, logNumber, leafIndex, leafHash, proofChunks, [], false);
+		if (reason != null) {
+			mtcFail(reason);
+		}
+	}
+
+	return {
+		verified: true,
+		mode: entry.mode,
+		// false when the batch key was only checked against a root hash supplied by the authenticator itself
+		trusted: entry.mode === "mds",
+		attestationType: "basic",
+		alg: alg,
+		caId: caId,
+		serial: serial,
+		logNumber: Number(logNumber),
+		leafIndex: leafIndex,
+		aaguid: aaguid,
+		notBefore: entry.notBefore,
+		notAfter: entry.notAfter,
+		batchPublicKeyCose: entry.coseKeyBytes,
+		subtree: { start: BigInt(subtree.start), end: BigInt(subtree.end) },
+		rootHash: mtcMetaBytes(subtree.rootHash, "rootHash"),
+		deviceSerial: debugExt != null && debugExt.deviceSerial != null ? String(debugExt.deviceSerial) : null
+	};
+}
+
+/**
+ * RP rule from WebAuthn Level 4 §10.2.1: the registration ceremony MUST fail if authenticatorData.extensions contains
+ * "mtc-debug", or clientExtensionResults.mtcDebug is present, when fmt is not "mtc".
+ *
+ * @returns {boolean} true when the rule is satisfied; throws an Error when it is violated
+ */
+function assertNoMTCDebugUnlessMTC(attestationObject, clientExtensionResults) {
+	let att = mtcDecodeAttestationObject(attestationObject);
+	let unpacked = unpackAuthData(mtcToBuffer(att.authData, "authData"));
+	let present = (unpacked.extensions != null && unpacked.extensions["mtc-debug"] !== undefined) ||
+		(clientExtensionResults != null && clientExtensionResults.mtcDebug !== undefined);
+	if (present && att.fmt !== "mtc") {
+		throw new Error("mtc-debug extension output is only allowed with fmt \"mtc\"");
+	}
+	return true;
+}
+
+
+
 
 /*
 * Override the CBOR decode method with a slightly modified version that handles remaining bytes in a
@@ -1658,5 +2038,7 @@ module.exports = {
 	canAuthenticateWithCredId: canAuthenticateWithCredId,
 	getFidoUtilsConfig: getFidoUtilsConfig,
 	setFidoUtilsConfig: setFidoUtilsConfig,
-	unpackAuthData: unpackAuthData
+	unpackAuthData: unpackAuthData,
+	verifyMTCAttestation: verifyMTCAttestation,
+	assertNoMTCDebugUnlessMTC: assertNoMTCDebugUnlessMTC
 };

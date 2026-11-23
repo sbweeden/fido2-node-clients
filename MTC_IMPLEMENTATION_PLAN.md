@@ -366,21 +366,21 @@ This is what `fidoutilsConfig.mtc` (Task 3.1) and the `mtc-debug` extension (Tas
 *Behaviours Task 5 / 6 should rely on*
 - The generated config block `mtc` (from `certs/generate_attestation_certs.*`) already contains everything needed (`coseKey`, `notBefore`, `notAfter`, `mtcProof`, `rootHash`), so `extensions: { mtcDebug: true }` produces a fully self-describing registration; the RP can verify offline using `unpackAuthData(authData).extensions["mtc-debug"]` (a decoded object: byte strings come back as byte arrays/Buffers — wrap with `Buffer.from(...)`; integers as numbers).
 - `mtc-debug` `mtcProof` is the raw concatenated sibling hashes (leaf -> root); split into 32 B chunks before calling `verifyRFC9162MerkleProof`. The leaf index is `serial & 0xFFFFFFFFFFFF` from `attStmt.mtcCert.serial`; the subtree `start`/`end` are **not** in the extension (only `rootHash`), so the in-band path can only check the Merkle path against the in-band `rootHash` (Levels 3/4) — it cannot verify the Level 2 checkpoint signature without MDS metadata (`subtrees[].start/end/signature`) and is therefore "offline conformance mode" per §8.10.
-- The RP-side rule from the spec note is **not** implemented yet (Task 5): if `mtc-debug` is present in `authenticatorData.extensions` or `clientExtensionResults.mtcDebug` is present when `fmt != "mtc"`, the RP MUST fail registration.
+- The RP-side rule from the spec note is implemented in Task 5 as `assertNoMTCDebugUnlessMTC`: if `mtc-debug` is present in `authenticatorData.extensions` or `clientExtensionResults.mtcDebug` is present when `fmt != "mtc"`, the RP MUST fail registration.
 
 *Caveats / not done*
 - The client-side rule "abort with `NotAllowedError` if the authenticator returns `mtc-debug` while `fmt` is not `mtc`" is a browser concern and is not modelled (this module emulates client+authenticator and never produces that combination).
 - `getClientExtensionResults` here is the pre-existing (non-standard) property name on the emulated `spkc`; it holds the JSON-serialized form directly, so no `toJSON()` step is needed by callers.
 - The `.env` file's `FIDO2_CLIENT_CONFIG` was not changed; regenerate it with `certs/generate_attestation_certs.sh` if the `mtc` block is missing.
 
-*Next up*: **Task 5** (`verifyMTCAttestation` Relying Party verification pipeline).
+*Next up*: **Task 5** (`verifyMTCAttestation` Relying Party verification pipeline) — now done, see below.
 
 ---
 
-### Task 5: Relying Party MTC Attestation Verification
+### Task 5: Relying Party MTC Attestation Verification  ✅ COMPLETE
 **Target Files**: `fidoutils.js`
 
-- [ ] **5.1 Implement `verifyMTCAttestation(attestationObject, clientDataHash, mdsMetadata)`**:
+- [x] **5.1 Implement `verifyMTCAttestation(attestationObject, clientDataHash, mdsMetadata)`**:
   - **Step 1**: Validate CDDL syntax of `fmt: "mtc"` and `attStmt`.
   - **Step 2**: Reconstruct `verificationData = authData || clientDataHash`.
   - **Step 3**: Resolve attestation key, timestamps, and Merkle proof from `mdsMetadata.mtcTrustAnchors[].batchKeys[]` (or in-band `authData.extensions["mtc-debug"]`).
@@ -391,6 +391,43 @@ This is what `fidoutilsConfig.mtc` (Task 3.1) and the `mtc-debug` extension (Tas
 
 **Verification**:
 - Verify valid registrations succeed and verify that tampering with any field (signature, AAGUID, serial, public key, or proof) fails verification.
+- Eight tests appended to `test_mtc_primitives.js` (section "Relying Party MTC attestation verification (Task 5)"). `npm run test:mtc-primitives`: 42 pass, 0 fail, 0 skipped (34 prior + 8 new). The last new test registers with the real `.env` `mtc` block and verifies against the real generated `certs/fidotest-mtc.json` (it self-skips if either file is missing or they do not match).
+
+**Implementation notes (Task 5 — read before starting Task 6)**:
+
+*Where the code is (`fidoutils.js`, inserted between `buildMTCAttestationStatement` and the `cbor.decode` override)*
+- Exported: `verifyMTCAttestation(attestationObject, clientDataHash, mdsMetadata, options)` and `assertNoMTCDebugUnlessMTC(attestationObject, clientExtensionResults)`. Internal helpers are prefixed `mtc` (`mtcFail`, `mtcToBuffer`, `mtcMetaBytes`, `mtcToUint64`, `mtcDecodeAttestationObject`, `mtcCheckSubtree`). No `jsrsasign` in this code (it uses `node:crypto` via `mykeyutil`/`mycertutil`, `cbor`, `Buffer`, `BigInt`). `unpackAuthData` (still the pre-existing parser) is used to read the AAGUID and `mtc-debug`.
+- `attestationObject` may be a decoded object, CBOR bytes (Buffer/Uint8Array/ArrayBuffer) or a base64url string (what `res.spkc.response.attestationObject` holds). `clientDataHash` must be the 32 byte SHA-256 of `clientDataJSON`.
+- Failure = the promise **rejects with `Error("MTC attestation verification failed: <reason>")`**; success resolves to `{ verified, mode: "mds"|"in-band", trusted, attestationType: "basic", alg, caId, serial (BigInt), logNumber, leafIndex (BigInt), aaguid (Buffer), notBefore/notAfter (BigInt), batchPublicKeyCose (Buffer), subtree {start,end} (BigInt), rootHash (Buffer), deviceSerial|null }`. Serials/timestamps are BigInt in results.
+- `options`: `{ allowInBand: false, acceptableAlgs: [-48,-49,-50,-7], now: <unix seconds, default Date.now()/1000> }`.
+
+*Pipeline as implemented (spec §8.10 step numbers in brackets)*
+1. [1] CDDL check: `fmt === "mtc"`; `attStmt` has **exactly** `alg` (int), `sig` (non-empty byte string), `mtcCert`; `mtcCert` has **exactly** `caId` (byte string) and `serial` (uint64; a decimal string is tolerated).
+2. [2] `alg` must be in `acceptableAlgs`.
+3. [3] `verificationData = authData || clientDataHash`; `authData` must parse (via `unpackAuthData`) and carry attested credential data (AAGUID).
+4. [4] Resolve the entry. **MDS mode**: find `mdsMetadata.mtcTrustAnchors[]` with `caId` equal (base64 compared as bytes), then `batchKeys[]` with equal `serial`; if `mdsMetadata.aaguid` is present it must equal the authData AAGUID. **In-band mode** is used only if the key is not in the metadata **and** `options.allowInBand === true` **and** `mtc-debug` is present (needs `pubKey`, `notBefore`, `notAfter`, `mtcProof`, `rootHash`). If both exist and `mtc-debug.pubKey` differs from the metadata key, verification fails.
+5. [5] `coseKey` must decode to a Map that re-encodes to the identical bytes with `cbor.encodeCanonical` (the leaf commits `SHA-256` of these exact bytes), COSE label 3 must equal `attStmt.alg`, then `attStmt.sig` is verified over `verificationData` with `mykeyutil.getPublicKeyFromCOSE` + `validateSignature` (Level 5; ML-DSA signs the raw bytes).
+6. [6] `notBefore <= now <= notAfter`.
+7. [7] Revocation: optional `anchor.revokedSerialRanges: [{start, end}]` (inclusive serials) rejected. This field is **our own convention** — the spec only says "the RP's metadata or manifest"; the generators do not emit it.
+8. [8] `mtcProof` is **required** (the "pre-distributed batchKeys[] without proof" branch is deliberately not accepted, because we cannot prove the table was authenticated). Must be a multiple of 32 B. Leaf = `computeFidoMtcLeafHash(buildFidoMtcLogEntry({caId, serial, notBefore, notAfter, aaguid(from authData), firmwareVersion, coseKeyBytes, extensions}))`; leaf index `serial & 0xFFFFFFFFFFFF`, logNumber `serial >> 48`.
+   - MDS mode: pick `subtrees[]` with matching `logNumber` and `start <= leafIndex < end`; Merkle proof must climb to `subtrees[].rootHash` (Level 3), **and** the 80+len(caId) B `FidoMtcSubtreeCheckpoint` signature must verify with at least one cert in `mdsMetadata.attestationRootCertificates` (Levels 1/2, `subtree.alg`, normally -50). Certificates of a non-matching key type are skipped.
+   - In-band mode: there is no trust anchor, so only the Merkle path to the in-band `rootHash` is checked; the subtree is assumed to be an aligned perfect tree of `2^(len(mtcProof)/32)` leaves. The result has `trusted: false` — callers must not treat in-band results as a trust decision.
+9. [9, 10] Enterprise mode (device serial vs. inventory) is **not** implemented; `deviceSerial` from `mtc-debug` is only echoed back in the result. Attestation type is returned as `"basic"`.
+
+*Optional extras the batchKeys entry may carry (not emitted by our generators, accepted if present)*: `firmwareVersion` (uint) and `extensions` (base64 bytes) so that leaves committing them can be rebuilt. If a leaf commits these and the metadata omits them the proof will fail.
+
+*Level 0 is out of scope*: the MDS3 BLOB JWS (`x5c` chain to the FIDO root) is **not** verified here. `mdsMetadata` must be an already-authenticated MetadataStatement.
+
+*Test fixture notes (for Task 6 reuse)*
+- `makeMtcFixture()` in `test_mtc_primitives.js` builds everything self-contained: an ML-DSA-87 root cert via the openssl CLI (`makeMLDSACert`, skips the tests if OpenSSL lacks ML-DSA), an 8 leaf tree with the batch key at index 5 and `logNumber` 1, a signed checkpoint, an MDS-style metadata object and a registration from `processCredentialCreationOptions(..., "mtc")` (with `mtcDebug` unless `extensions` is null). Handy to lift into `test_mtc.js`.
+- Gotchas hit while writing the tests: (a) `mykeyutil.getPublicKeyHex` returns **SPKI** DER, not the raw ML-DSA key — use `getPublicKeyCOSE(alg, kp)["-1"]` for the COSE `-1` value (`test_mtc_primitives.js` earlier tasks only passed because the key was never imported); (b) `cbor.encode` of a `Uint8Array` emits a tagged typed array, so convert decoded byte strings to `Buffer` before re-encoding a tampered attestationObject (`toBufs`/`encodeAtt` helpers); (c) the `fidoutils.js` `cbor.decode` override only affects the exported `cbor` object method `decode`; `cbor.decodeFirstSync` (used by the verifier) is unaffected.
+
+*Caveats / not done*
+- `verifyMTCAttestation` is not wired into any server flow (this repo is client/authenticator emulation); callers invoke it directly.
+- Certificate chain/validity of the vendor root certificate itself (self-signature, `CA:TRUE`, expiry) is not checked; the cert only supplies the public key for the checkpoint signature. The cert's SPKI is imported with `subtree.alg`.
+- No replay/duplicate-credential or RP ID / UP / UV checks (generic registration steps outside the attestation format).
+
+*Next up*: **Task 6** (`test_mtc.js` integration runner, `.env.example` docs, `npm run test:mtc`).
 
 ---
 
