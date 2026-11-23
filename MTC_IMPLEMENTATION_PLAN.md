@@ -198,7 +198,7 @@ gantt
     section Phase 5: Relying Party Verification
     Task 5.1 6-Level Verification Pipeline in fidoutils.js :4, 5
     section Phase 6: Testing & Validation
-    Task 6.1 End-to-End Test Suite in test_mtc.js :5, 6
+    Task 6.1 End-to-End Test Suite in test/test_mtc.js :5, 6
 ```
 
 ---
@@ -222,7 +222,7 @@ gantt
   - Export native `toHex`, `fromHex`, `toBase64Url`, `fromBase64Url`, `toBase64`, `fromBase64` using `Buffer` to avoid `jsrsasign`.
 
 **Verification**:
-- Run `npm run test:mtc-primitives` (`test_mtc_primitives.js`, `node:test`) to validate preimage bytes, leaf hash computation, and RFC 9162 Merkle proof evaluation against known test vectors.
+- Run `npm run test:mtc-primitives` (`test/test_mtc_primitives.js`, `node:test`) to validate preimage bytes, leaf hash computation, and RFC 9162 Merkle proof evaluation against known test vectors.
 
 ---
 
@@ -290,14 +290,12 @@ This is what `fidoutilsConfig.mtc` (Task 3.1) and the `mtc-debug` extension (Tas
 - `./certs/generate_attestation_certs.sh` (from a clean directory) exits 0, produces all artifacts, and the emitted `mtc` block parses as JSON. Node standalone run also emits `"mtc"`.
 - An independent script re-verified from the generated files: checkpoint is 85 B and its ML-DSA-87 signature verifies against the cert in `attestationRootCertificates[0]`; `FidoMtcLogEntry` is 82 B; the Merkle proof (10 siblings) climbs to `rootHash` via `verifyRFC9162MerkleProof`; the COSE_Key decodes to `{1:7, 3:-48, -1:<1312 B>}` and matches `mtc-batch.key`; `privateKeyHex` from the config imports and produces signatures that verify with the batch public key.
 - `npm run test:mtc-primitives`: 28 pass, 0 fail (no regressions in Task 1).
-- Not yet covered by an automated test; Task 6 (`test_mtc.js`) should include a generator-output sanity test.
+- Not yet covered by an automated test; Task 6 (`test/test_mtc.js`) should include a generator-output sanity test.
 
 *Known issues / caveats*
 - *Fixed (was pre-existing)*: PEM files written by the jsrsasign path (`rootCA.pem`, `u2f.pem`, `packed.pem`, `tpm.pem`, `tpminter.pem`) are CRLF-terminated, so the `.sh` script's `tr -d '\n'` left `\r` in the base64 cert strings and the `FIDO2_CLIENT_CONFIG=` line was not valid JSON when those files already existed. All nine `tr -d '\n'` extractions in `generate_attestation_certs.sh` now use `tr -d '\r\n'`. Verified: with the existing CRLF PEMs the emitted `FIDO2_CLIENT_CONFIG=` value parses as JSON and each `cert`/`tpmIntercert` equals the base64 DER of its PEM file.
 - `fidoutils.js` still does not read `fidoutilsConfig.mtc`; that is Task 3. The `jsrsasign` import in the node generator remains only for the legacy U2F/packed/TPM code; none of the new MTC code uses it.
 - Changing an existing `fidotest-mtc.json` is not detected: delete `fidotest-mtc.json` (or run `cleanup.sh`) to regenerate the tree/checkpoint after replacing keys or the AAGUID.
-
-*Next up*: **Task 4** (In-Band Diagnostic Extension `mtcDebug` / `mtc-debug`).
 
 ---
 
@@ -326,7 +324,7 @@ This is what `fidoutilsConfig.mtc` (Task 3.1) and the `mtc-debug` extension (Tas
   - Fixed 64-bit uint decoding constant definitions (`POW_2_24`, `POW_2_32`, `POW_2_53`) in `cbor.decode` override.
 
 **Verification**:
-- Automated unit tests added to `test_mtc_primitives.js`:
+- Automated unit tests added to `test/test_mtc_primitives.js`:
   - `processCredentialCreationOptions: creates valid fmt: "mtc" attestation statement` (verifies CBOR encoding, CDDL structure, AAGUID inclusion, and signature validity over raw `authData || clientDataHash` with ML-DSA-44 batch key).
   - `processCredentialCreationOptions: supports ML-DSA-87 (alg -50) batch keys for MTC` (verifies ML-DSA-87 batch key signing and verification).
 - `npm run test:mtc-primitives` executed: 30 pass, 0 fail.
@@ -347,7 +345,7 @@ This is what `fidoutilsConfig.mtc` (Task 3.1) and the `mtc-debug` extension (Tas
 
 **Verification**:
 - Perform registration with `extensions: { mtcDebug: true }` and confirm presence of `authenticatorData.extensions["mtc-debug"]` and `clientExtensionResults.mtcDebug`.
-- Four tests appended to `test_mtc_primitives.js` (section "mtcDebug / mtc-debug in-band diagnostic extension (Task 4)"). `npm run test:mtc-primitives`: 34 pass, 0 fail (30 prior + 4 new).
+- Four tests appended to `test/test_mtc_primitives.js` (section "mtcDebug / mtc-debug in-band diagnostic extension (Task 4)"). `npm run test:mtc-primitives`: 34 pass, 0 fail (30 prior + 4 new).
 
 **Implementation notes (Task 4 — read before starting Task 5)**:
 
@@ -391,7 +389,7 @@ This is what `fidoutilsConfig.mtc` (Task 3.1) and the `mtc-debug` extension (Tas
 
 **Verification**:
 - Verify valid registrations succeed and verify that tampering with any field (signature, AAGUID, serial, public key, or proof) fails verification.
-- Eight tests appended to `test_mtc_primitives.js` (section "Relying Party MTC attestation verification (Task 5)"). `npm run test:mtc-primitives`: 42 pass, 0 fail, 0 skipped (34 prior + 8 new). The last new test registers with the real `.env` `mtc` block and verifies against the real generated `certs/fidotest-mtc.json` (it self-skips if either file is missing or they do not match).
+- Eight tests appended to `test/test_mtc_primitives.js` (section "Relying Party MTC attestation verification (Task 5)"). `npm run test:mtc-primitives`: 42 pass, 0 fail, 0 skipped (34 prior + 8 new). The last new test registers with the real `.env` `mtc` block and verifies against the real generated `certs/fidotest-mtc.json` (it self-skips if either file is missing or they do not match).
 
 **Implementation notes (Task 5 — read before starting Task 6)**:
 
@@ -419,31 +417,55 @@ This is what `fidoutilsConfig.mtc` (Task 3.1) and the `mtc-debug` extension (Tas
 *Level 0 is out of scope*: the MDS3 BLOB JWS (`x5c` chain to the FIDO root) is **not** verified here. `mdsMetadata` must be an already-authenticated MetadataStatement.
 
 *Test fixture notes (for Task 6 reuse)*
-- `makeMtcFixture()` in `test_mtc_primitives.js` builds everything self-contained: an ML-DSA-87 root cert via the openssl CLI (`makeMLDSACert`, skips the tests if OpenSSL lacks ML-DSA), an 8 leaf tree with the batch key at index 5 and `logNumber` 1, a signed checkpoint, an MDS-style metadata object and a registration from `processCredentialCreationOptions(..., "mtc")` (with `mtcDebug` unless `extensions` is null). Handy to lift into `test_mtc.js`.
-- Gotchas hit while writing the tests: (a) `mykeyutil.getPublicKeyHex` returns **SPKI** DER, not the raw ML-DSA key — use `getPublicKeyCOSE(alg, kp)["-1"]` for the COSE `-1` value (`test_mtc_primitives.js` earlier tasks only passed because the key was never imported); (b) `cbor.encode` of a `Uint8Array` emits a tagged typed array, so convert decoded byte strings to `Buffer` before re-encoding a tampered attestationObject (`toBufs`/`encodeAtt` helpers); (c) the `fidoutils.js` `cbor.decode` override only affects the exported `cbor` object method `decode`; `cbor.decodeFirstSync` (used by the verifier) is unaffected.
+- `makeMtcFixture()` in `test/test_mtc_primitives.js` builds everything self-contained: an ML-DSA-87 root cert via the openssl CLI (`makeMLDSACert`, skips the tests if OpenSSL lacks ML-DSA), an 8 leaf tree with the batch key at index 5 and `logNumber` 1, a signed checkpoint, an MDS-style metadata object and a registration from `processCredentialCreationOptions(..., "mtc")` (with `mtcDebug` unless `extensions` is null). Handy to lift into `test/test_mtc.js`.
+- Gotchas hit while writing the tests: (a) `mykeyutil.getPublicKeyHex` returns **SPKI** DER, not the raw ML-DSA key — use `getPublicKeyCOSE(alg, kp)["-1"]` for the COSE `-1` value (`test/test_mtc_primitives.js` earlier tasks only passed because the key was never imported); (b) `cbor.encode` of a `Uint8Array` emits a tagged typed array, so convert decoded byte strings to `Buffer` before re-encoding a tampered attestationObject (`toBufs`/`encodeAtt` helpers); (c) the `fidoutils.js` `cbor.decode` override only affects the exported `cbor` object method `decode`; `cbor.decodeFirstSync` (used by the verifier) is unaffected.
 
 *Caveats / not done*
 - `verifyMTCAttestation` is not wired into any server flow (this repo is client/authenticator emulation); callers invoke it directly.
 - Certificate chain/validity of the vendor root certificate itself (self-signature, `CA:TRUE`, expiry) is not checked; the cert only supplies the public key for the checkpoint signature. The cert's SPKI is imported with `subtree.alg`.
 - No replay/duplicate-credential or RP ID / UP / UV checks (generic registration steps outside the attestation format).
 
-*Next up*: **Task 6** (`test_mtc.js` integration runner, `.env.example` docs, `npm run test:mtc`).
+*Next up*: **Task 6** (`test/test_mtc.js` integration runner, `.env.example` docs, `npm run test:mtc`).
 
 ---
 
-### Task 6: Comprehensive Integration Testing & Configuration
-**Target Files**: `test_mtc.js`, `.env.example`, `package.json`
+### Task 6: Comprehensive Integration Testing & Configuration  ✅ COMPLETE
+**Target Files**: `test/test_mtc.js`, `.env.example`, `package.json`
 
-- [ ] **6.1 Create `test_mtc.js` Integration Test Runner**:
+- [x] **6.1 Create `test/test_mtc.js` Integration Test Runner**:
   - Test 1: Full registration and verification with FIDO MDS3 metadata.
   - Test 2: In-band registration and autonomous verification with `mtcDebug` extension.
   - Test 3: Negative security tests (invalid signature, altered AAGUID, forged leaf, bad Merkle path, expired timestamp, tampered checkpoint).
-- [ ] **6.2 Update Configuration Documentation & Environment**:
+- [x] **6.2 Update Configuration Documentation & Environment**:
   - Document `mtc` block in `.env.example`.
-  - Add npm script `"test:mtc": "node test_mtc.js"` to `package.json`.
+  - Add npm script `"test:mtc"` to `package.json` (implemented as `node --test test/test_mtc.js`, same style as `test:mtc-primitives`, rather than plain `node test/test_mtc.js`, so the `node:test` reporter/exit code is used).
 
 **Verification**:
-- Run `npm run test:mtc` and all regression tests.
+- `npm run test:mtc`: 13 pass, 0 fail, 0 skipped. `npm run test:mtc-primitives`: 42 pass, 0 fail, 0 skipped (no regressions).
+
+**Implementation notes (Task 6)**:
+
+*What `test/test_mtc.js` does differently from `test/test_mtc_primitives.js`*
+- `test/test_mtc_primitives.js` = unit tests with hand-built fixtures (8 leaf tree, openssl CLI used to make a root cert). `test/test_mtc.js` = integration tests that drive the **real generator** end to end: `certs/generate_attestation_certs.js --mtc-only` -> `mtc` config block -> `processCredentialCreationOptions(..., "mtc")` -> `verifyMTCAttestation`.
+- The generator is run **once per test process in a fresh temp dir** (`os.tmpdir()/mtc-it-*`, `icon.txt` copied in, removed afterwards), so the tests do not read or modify the developer's `certs/` artifacts or `.env`, and they do not depend on the `openssl` CLI (the node script creates the ML-DSA-87 root cert itself). Requires Node 24+. The tree is the real 1024 leaf tree (proof = 10 siblings = 320 B), the batch key is ML-DSA-44 (alg -48), serial `2^48`, leaf index 0.
+- Tests (13): `generator` sanity (metadata/config consistency, checkpoint 85 B verified with the cert's ML-DSA-87 key, 82 B log entry, Merkle path, hex/base64 values agree, generator is idempotent on re-run); `Test 1` (MDS3 verification with and without `mtcDebug`, wire-format shape, result fields, `assertNoMTCDebugUnlessMTC`); `1b` (wrong AAGUID / unknown caId / no metadata); `Test 2` (in-band `mtc-debug` authData extension + client output base64url, verified with `allowInBand: true`, `trusted: false`; refused by default); `2b` (metadata present => MDS mode wins even when `mtc-debug` is present); `Test 3a`-`3h` negatives: bad/truncated signature, wrong `clientDataHash`, tampered authData bytes (rpIdHash, flags/counter, AAGUID); altered AAGUID (metadata mismatch, and unpinned-metadata => leaf commitment fails Merkle proof); forged leaf (notBefore/notAfter/firmwareVersion, wrong key in metadata, attacker key that signs validly but is not logged, unlogged serial); bad Merkle path (every sibling flipped, swapped, truncated, extended, misaligned, missing); expired/not-yet-valid/revoked; tampered checkpoint (signature bit flip, root hash, range/logNumber, attacker-signed checkpoint, no root certs); in-band tampering + RP rule for `mtc-debug` with other fmts; malformed attStmt shapes.
+- Run just this suite with `npm run test:mtc`. Typical runtime ~2 s.
+
+*Config/doc changes*
+- `.env.example` now documents the `mtc` block of `FIDO2_CLIENT_CONFIG` (field meanings, hex encoding, which fields are only needed for `mtcDebug`, optional `firmwareVersion` / `deviceSerial`) and points to `certs/fidotest-mtc.json` as the MDS3 statement to upload. The real `.env` is untouched.
+- `package.json`: added `test:mtc`.
+
+*Gotchas found while writing the tests*
+- `mykeyutil.getPublicKeyFromCOSE` takes a plain object with string keys (`{"1","3","-1"}`), **not** CBOR bytes or a `Map`.
+- Result of `unpackAuthData(...)` does not expose the AAGUID as a simple `.aaguid` field; the tests read bytes 37..52 of authData directly.
+- Documented assertion behaviour confirmed: a rogue authenticator reporting a different AAGUID is rejected with `aaguid does not match` when the metadata pins the AAGUID, otherwise by `Merkle inclusion proof` failure (the leaf commits the AAGUID).
+
+*Not covered / remaining ideas (all optional)*
+- The README does not yet mention MTC or `npm run test:mtc*` (only `.env.example` documents it).
+- No live-server test (no server flow calls `verifyMTCAttestation`); Level 0 (MDS3 BLOB JWS) is still out of scope.
+- Enterprise mode (deviceSerial vs. RP inventory) is still not implemented in the verifier.
+
+*Status*: **All six tasks in this plan are complete.**
 
 ---
 

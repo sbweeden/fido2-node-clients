@@ -5,7 +5,8 @@
   "main": "fido2client.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "test:mtc-primitives": "node --test test_mtc_primitives.js"
+    "test:mtc-primitives": "node --test test/test_mtc_primitives.js",
+    "test:mtc": "node --test test/test_mtc.js"
   },
   "repository": {
     "type": "git",

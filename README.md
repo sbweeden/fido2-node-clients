@@ -62,8 +62,11 @@ This script produces several JSON FIDO Metadata files (in MDS3 format), which ca
  - `fidotest-packed.json`
  - `fidotest-tpm.json`
  - `fidotest-self.json`
+ - `fidotest-mtc.json` (for the Merkle Tree Certificate format, see [Merkle Tree Certificate (MTC) attestation](#merkle-tree-certificate-mtc-attestation-fmt-mtc))
 
-The script also generates a configuration variable called `FIDO2_CLIENT_CONFIG` which will be used in the next step.
+The script also generates a configuration variable called `FIDO2_CLIENT_CONFIG` which will be used in the next step. This variable includes an `mtc` block in addition to the blocks for the other attestation formats.
+
+Note: the MTC artifacts (an ML-DSA-87 root CA, `rootCA-mldsa87.key`/`.pem`, an authenticator batch key `mtc-batch.key` and `mtc.aaguid`) need **OpenSSL 3.5 or later** (for ML-DSA support) and **Node.JS 24 or later** (ML-DSA in `node:crypto`). The MTC output lines in the example above are omitted for brevity.
 
 Note: There is also a Node.JS equivalent of the bash script provided called `generate_attestation_certs.js`. This should be functionally equivalent to `generate_attestation_certs.sh` except that it doesn't generate unnecessary CSR files, nor does it require some of the input files used by the openssl command line utility. You can use it as an alternative to `generate_attestation_certs.sh` simply by using Node.JS on the command line:
 
@@ -392,3 +395,81 @@ You can then run the example which is actually just a repeat of the last step of
 <REDACTED - SAME content as above>
 ```
 
+
+## Merkle Tree Certificate (MTC) attestation (`fmt: "mtc"`)
+
+The client can produce, and `fidoutils.js` can verify, the Merkle Tree Certificate attestation statement format defined in WebAuthn Level 4 (section 8.10), including the `mtcDebug` diagnostic extension (section 10.2.1). With this format the registration response carries only a tiny reference to the authenticator's batch attestation key (`attStmt.mtcCert = { caId, serial }`) plus a signature (`attStmt.sig`). The heavy post-quantum material (the ML-DSA-87 root CA certificate and the signed Merkle tree checkpoints) is distributed out-of-band in the FIDO metadata (MDS3) statement.
+
+The design, binary formats and the trust chain are described in detail in [MTC_IMPLEMENTATION_PLAN.md](MTC_IMPLEMENTATION_PLAN.md), which also records what was implemented in each task. The MTC code does not use `jsrsasign`; it relies on `node:crypto`, `cbor` and native `Buffer`.
+
+### Requirements
+
+ - Node.JS 24 or later (ML-DSA support in `node:crypto`)
+ - OpenSSL 3.5 or later, only if you use `certs/generate_attestation_certs.sh` (the Node.JS generator does not need the `openssl` command)
+
+### Generated artifacts
+
+Running either `generate_attestation_certs` script (see [Establishing FIDO Attestation artifacts](#establishing-fido-attestation-artifacts)) additionally creates, in the `certs` directory:
+
+| File | Description |
+|---|---|
+| `rootCA-mldsa87.key` / `rootCA-mldsa87.pem` | Self-signed ML-DSA-87 (COSE alg `-50`) vendor root CA, DN `/C=US/O=IBM/CN=FIDOTEST-MTC-ROOT` |
+| `mtc-batch.key` | Authenticator batch attestation key, ML-DSA-44 (COSE alg `-48`) |
+| `mtc.aaguid` | AAGUID of the test authenticator |
+| `fidotest-mtc.json` | MDS3 metadata statement: `attestationRootCertificates` plus `mtcTrustAnchors` (`caId`, signed `subtrees` checkpoint, `batchKeys` with `coseKey`, validity and Merkle `mtcProof`) |
+
+`fidotest-mtc.json` describes a 1024 leaf RFC 9162 Merkle tree in which leaf 0 is the real batch key (the other leaves are deterministic placeholders). Load it on your FIDO2 server in the same way as the other metadata files. All binary values in it are standard base64.
+
+The `mtc` block of `FIDO2_CLIENT_CONFIG` (hex encoded binary values) tells the client which batch key to sign with and what to report in the diagnostic extension. Its fields are documented in [.env.example](.env.example). As with the other attestation formats, copy the generated `FIDO2_CLIENT_CONFIG` value into your `.env` file.
+
+If you replace keys or the AAGUID, delete `fidotest-mtc.json` (or run `certs/cleanup.sh`) so that the tree and checkpoint are regenerated. Both generators are idempotent and reuse existing files.
+
+### Creating an MTC registration
+
+Use `mtc` as the attestation format, exactly as for the other formats. For example, in `isv_example1.js`:
+
+```javascript
+let attestationFormats = [ "mtc" ];
+```
+
+To include the in-band diagnostic extension (`authenticatorData.extensions["mtc-debug"]` and `clientExtensionResults.mtcDebug`) the credential creation options must contain `extensions: { mtcDebug: true }` (the examples pass through whatever `extensions` the server returns in its attestation options, so for the ISV/ISVA examples either the server must supply it or you add it to the options in your own code before calling `fidoutils.processCredentialCreationOptions`). It is only honoured when the format is `mtc`; for any other format it is ignored. The extension carries the COSE public key, validity window, Merkle proof and root hash from the `mtc` configuration block, and `deviceSerial` only when `attestation: "enterprise"` was requested. Because the extension is part of `authenticatorData`, `attStmt.sig` covers it.
+
+The signature is made over the raw bytes `authenticatorData || SHA-256(clientDataJSON)`, with no additional pre-hash.
+
+### Verifying an MTC registration
+
+`fidoutils.verifyMTCAttestation(attestationObject, clientDataHash, mdsMetadata, options)` implements the Relying Party verification. `attestationObject` may be decoded, raw CBOR bytes or a base64url string, and `mdsMetadata` is an already authenticated metadata statement such as `fidotest-mtc.json`:
+
+```javascript
+const fidoutils = require('./fidoutils.js');
+const metadata = require('./certs/fidotest-mtc.json');
+
+// clientDataHash is the SHA-256 of the registration clientDataJSON
+const result = await fidoutils.verifyMTCAttestation(attestationObject, clientDataHash, metadata);
+// result: { verified, mode: "mds", trusted: true, attestationType: "basic", alg, caId, serial, leafIndex, ... }
+```
+
+It rejects (the promise fails with `MTC attestation verification failed: <reason>`) unless all of the following hold:
+
+ 1. `fmt` is `mtc` and `attStmt` contains exactly `alg`, `sig` and `mtcCert { caId, serial }`.
+ 2. The attestation key for `(caId, serial)` is found in `mtcTrustAnchors[].batchKeys[]` (and the metadata AAGUID, if present, equals the authenticator's AAGUID).
+ 3. `attStmt.sig` verifies over `authenticatorData || clientDataHash` with that key, and the COSE_Key `alg` equals `attStmt.alg`.
+ 4. The current time is within `notBefore`/`notAfter`, and the serial is not in an optional `revokedSerialRanges` list.
+ 5. The `FidoMtcLogEntry` rebuilt from the registration (it commits the AAGUID, serial, validity and `SHA-256(coseKey)`) climbs the supplied Merkle path to `subtrees[].rootHash`.
+ 6. The ML-DSA-87 signature over the `FidoMtcSubtreeCheckpoint` verifies against a certificate in `attestationRootCertificates`.
+
+`options` is `{ allowInBand: false, acceptableAlgs: [-48, -49, -50, -7], now: <unix seconds> }`. With `allowInBand: true`, and no matching entry in the metadata, verification can fall back to the `mtc-debug` extension and checks only the Merkle path to the in-band root hash. That mode needs no metadata but there is no trust anchor, so the result has `trusted: false` and must not be used as a trust decision.
+
+`fidoutils.assertNoMTCDebugUnlessMTC(attestationObject, clientExtensionResults)` implements the rule that a Relying Party must fail a registration that carries `mtc-debug` output with a format other than `mtc`.
+
+Not covered: verifying the MDS3 BLOB signature itself (the metadata must already be authenticated), validating the vendor root certificate chain or validity, enterprise attestation inventory checks, and wiring into a server flow (callers invoke the verifier directly).
+
+### Tests
+
+```
+[fido2-node-clients] $ npm run test:mtc-primitives
+[fido2-node-clients] $ npm run test:mtc
+```
+
+ - `npm run test:mtc-primitives` runs [test/test_mtc_primitives.js](test/test_mtc_primitives.js): unit tests for the binary preimages, RFC 9162 Merkle tree and proofs, encoding helpers, ML-DSA X.509 key import, attestation generation, the `mtcDebug` extension and the verifier.
+ - `npm run test:mtc` runs [test/test_mtc.js](test/test_mtc.js): integration tests that run the real certificate generator in a temporary directory, register with the emulated authenticator and verify using MDS metadata and in-band, plus negative tests (bad signature, altered AAGUID, forged leaf, bad Merkle path, expired timestamp, tampered checkpoint). They do not touch your `certs` directory or `.env`.
